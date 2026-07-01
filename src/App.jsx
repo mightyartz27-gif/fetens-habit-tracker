@@ -11,6 +11,7 @@ import {
 import { loadLocal, saveLocal, syncEnabled, pushToCloud, pullFromCloud } from './store'
 import CreateHabit from './CreateHabit'
 import HabitDetail from './HabitDetail'
+import Lockscreen from './Lockscreen'
 
 const USER = 'Feten'
 
@@ -108,6 +109,7 @@ function ConfirmDelete({ habit, onClose, onConfirm }) {
 }
 
 export default function App() {
+  const [locked, setLocked] = useState(() => sessionStorage.getItem('feten_unlocked') !== '1')
   const [tab, setTab] = useState('home')
   const [{ habits, log, entries }, setState] = useState({ habits: [], log: {}, entries: {} })
   const [showCreate, setShowCreate] = useState(false)
@@ -227,6 +229,9 @@ export default function App() {
   const todays = habits.filter(h => !h.archived && !h.paused && scheduledOn(h, now))
   const pending = todays.filter(h => !isDone(h, log))
   const completed = todays.filter(h => isDone(h, log))
+
+  // Passcode gate
+  if (locked) return <Lockscreen onUnlock={() => setLocked(false)} />
 
   // Full-screen detail view takes over
   if (liveDetail) {
@@ -521,39 +526,96 @@ function DayRow({ h, status }) {
 
 // ---------- INSIGHTS ----------
 function Insights({ habits, log }) {
+  const [range, setRange] = useState('Week') // Week | Month | Year
   const active = habits.filter(h => !h.archived)
-  // Weekly bar (last 7 days completion count)
-  const week = []
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(); d.setDate(d.getDate() - i)
+
+  const doneOn = (d) => {
     const sched = active.filter(h => scheduledOn(h, d))
     const done = sched.filter(h => isDone(h, log, todayKey(d))).length
-    week.push({ label: d.toLocaleDateString('default', { weekday: 'narrow' }), done, total: sched.length || 1 })
+    return { done, total: sched.length }
   }
-  const maxDone = Math.max(1, ...week.map(w => w.done))
+
+  // Build chart buckets + range-limited completion total based on the selected range
+  let bars = []
+  let rangeDone = 0
+  const today = new Date()
+
+  if (range === 'Week') {
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i)
+      const { done, total } = doneOn(d)
+      rangeDone += done
+      bars.push({ label: d.toLocaleDateString('default', { weekday: 'narrow' }), done, total: total || 1 })
+    }
+  } else if (range === 'Month') {
+    // Last ~30 days grouped into weekly buckets
+    for (let w = 4; w >= 0; w--) {
+      let done = 0, total = 0
+      for (let day = 0; day < 7; day++) {
+        const d = new Date(); d.setDate(d.getDate() - (w * 7 + day))
+        const r = doneOn(d); done += r.done; total += r.total
+      }
+      rangeDone += done
+      bars.push({ label: w === 0 ? 'Now' : `${w}w`, done, total: total || 1 })
+    }
+  } else {
+    // Last 12 months, monthly buckets
+    for (let m = 11; m >= 0; m--) {
+      const ref = new Date(today.getFullYear(), today.getMonth() - m, 1)
+      const daysIn = new Date(ref.getFullYear(), ref.getMonth() + 1, 0).getDate()
+      let done = 0, total = 0
+      for (let day = 1; day <= daysIn; day++) {
+        const d = new Date(ref.getFullYear(), ref.getMonth(), day)
+        if (d > today) break
+        const r = doneOn(d); done += r.done; total += r.total
+      }
+      rangeDone += done
+      bars.push({ label: ref.toLocaleDateString('default', { month: 'narrow' }), done, total: total || 1 })
+    }
+  }
+  const maxDone = Math.max(1, ...bars.map(b => b.done))
 
   const best = active.map(h => ({ h, s: currentStreak(h, log) })).sort((a, b) => b.s - a.s)[0]
   const totalDone = active.reduce((sum, h) => {
     return sum + Object.values(log[h.id] || {}).filter(v => v === 'done' || (typeof v === 'number' && v > 0)).length
   }, 0)
 
+  // 7-day window still used for the Perfect Week achievement
+  const last7 = []
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i)
+    last7.push(doneOn(d))
+  }
+
   const ACHIEVEMENTS = [
     { id: 'first', label: 'First Habit', icon: Sparkles, unlocked: active.length >= 1 },
     { id: '7day', label: '7 Day Streak', icon: Flame, unlocked: active.some(h => longestStreak(h, log) >= 7) },
     { id: '30day', label: '30 Day Streak', icon: Trophy, unlocked: active.some(h => longestStreak(h, log) >= 30) },
     { id: '100', label: '100 Completions', icon: Award, unlocked: totalDone >= 100 },
-    { id: 'perfectweek', label: 'Perfect Week', icon: TrendingUp, unlocked: week.every(w => w.done >= w.total && w.total > 0) },
+    { id: 'perfectweek', label: 'Perfect Week', icon: TrendingUp, unlocked: last7.every(w => w.total > 0 && w.done >= w.total) },
   ]
+
+  const chartTitle = range === 'Week' ? 'This Week' : range === 'Month' ? 'Last 4 Weeks' : 'Last 12 Months'
+  const rangeLabel = range === 'Week' ? 'This week' : range === 'Month' ? 'This month' : 'This year'
 
   return (
     <div className="fade-in">
       <h1 className="t-screen" style={{ marginBottom: 6 }}>Insights</h1>
-      <p className="t-help" style={{ marginBottom: 20 }}>A gentle look at your progress.</p>
+      <p className="t-help" style={{ marginBottom: 16 }}>A gentle look at your progress.</p>
+
+      {/* Range filter */}
+      <div className="row" style={{ gap: 8, marginBottom: 20 }}>
+        {['Week', 'Month', 'Year'].map(r => (
+          <button key={r} onClick={() => { setRange(r); haptic() }}
+            className={`chip ${range === r ? 'active' : ''}`}
+            style={{ flex: 1, textAlign: 'center' }}>{r}</button>
+        ))}
+      </div>
 
       <div className="row" style={{ gap: 12, marginBottom: 20 }}>
         <div className="card" style={{ flex: 1, padding: 16, textAlign: 'center' }}>
-          <div className="stat-num">{totalDone}</div>
-          <div className="t-caption">Completed</div>
+          <div className="stat-num">{rangeDone}</div>
+          <div className="t-caption">{rangeLabel}</div>
         </div>
         <div className="card" style={{ flex: 1, padding: 16, textAlign: 'center' }}>
           <div className="stat-num">{best ? best.s : 0}</div>
@@ -561,21 +623,21 @@ function Insights({ habits, log }) {
         </div>
       </div>
 
-      {/* Weekly bar chart */}
+      {/* Adaptive bar chart */}
       <div className="card" style={{ padding: 20, marginBottom: 20 }}>
-        <div className="t-section" style={{ marginBottom: 16 }}>This Week</div>
-        <div className="row" style={{ alignItems: 'flex-end', gap: 10, height: 120 }}>
-          {week.map((w, i) => (
+        <div className="t-section" style={{ marginBottom: 16 }}>{chartTitle}</div>
+        <div className="row" style={{ alignItems: 'flex-end', gap: range === 'Year' ? 5 : 10, height: 120 }}>
+          {bars.map((b, i) => (
             <div key={i} style={{ flex: 1, textAlign: 'center' }}>
               <div style={{ height: 92, display: 'flex', alignItems: 'flex-end' }}>
                 <div style={{
-                  width: '100%', borderRadius: 8,
-                  height: `${(w.done / maxDone) * 100}%`, minHeight: w.done ? 8 : 2,
-                  background: w.done ? 'var(--purple)' : 'var(--purple-light)',
+                  width: '100%', borderRadius: 6,
+                  height: `${(b.done / maxDone) * 100}%`, minHeight: b.done ? 6 : 2,
+                  background: b.done ? 'var(--purple)' : 'var(--purple-light)',
                   transition: 'height 500ms cubic-bezier(0.16,1,0.3,1)',
                 }} />
               </div>
-              <div className="t-caption" style={{ marginTop: 6 }}>{w.label}</div>
+              <div className="t-caption" style={{ marginTop: 6, fontSize: 11 }}>{b.label}</div>
             </div>
           ))}
         </div>
