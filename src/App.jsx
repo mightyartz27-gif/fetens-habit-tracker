@@ -10,6 +10,7 @@ import {
 } from './helpers'
 import { loadLocal, saveLocal, syncEnabled, pushToCloud, pullFromCloud } from './store'
 import CreateHabit from './CreateHabit'
+import HabitDetail from './HabitDetail'
 
 const USER = 'Feten'
 
@@ -36,17 +37,17 @@ function Ring({ done, total, size = 120 }) {
 }
 
 // ---------- Habit Card ----------
-function HabitCard({ habit, log, onComplete, onIncrement, onLongPress }) {
+function HabitCard({ habit, log, onComplete, onUndo, onIncrement, onOpen }) {
   const [completing, setCompleting] = useState(false)
   const [glow, setGlow] = useState(false)
-  const pressTimer = useRef(null)
   const Icon = ICONS[habit.icon] || ICONS.Droplets
   const done = isDone(habit, log)
   const val = progressValue(habit, log)
   const isCounter = habit.goalType !== 'Simple Check'
 
-  const complete = () => {
-    if (done) return
+  const complete = (e) => {
+    e.stopPropagation()
+    if (done) { haptic(); onUndo(habit); return }
     haptic()
     if (isCounter && val + 1 < habit.goalTarget) {
       onIncrement(habit)
@@ -58,12 +59,9 @@ function HabitCard({ habit, log, onComplete, onIncrement, onLongPress }) {
     setTimeout(() => { onComplete(habit) }, 520)
   }
 
-  const startPress = () => { pressTimer.current = setTimeout(() => onLongPress(habit), 500) }
-  const endPress = () => clearTimeout(pressTimer.current)
-
   return (
     <div className={`habit-card ${completing ? 'completing' : ''} ${glow ? 'glow' : ''}`}
-      onTouchStart={startPress} onTouchEnd={endPress} onMouseDown={startPress} onMouseUp={endPress} onMouseLeave={endPress}>
+      onClick={() => onOpen(habit)} role="button">
       <div className="habit-icon" style={{ background: habit.color + '20' }}>
         <Icon size={24} color={habit.color} />
       </div>
@@ -80,7 +78,7 @@ function HabitCard({ habit, log, onComplete, onIncrement, onLongPress }) {
           </div>
         )}
       </div>
-      <button className={`check-btn ${done ? 'done' : ''}`} onClick={complete} aria-label="Complete habit"
+      <button className={`check-btn ${done ? 'done' : ''}`} onClick={complete} aria-label={done ? 'Undo' : 'Complete habit'}
         style={done ? { background: habit.color, borderColor: habit.color } : {}}>
         {done ? <Check size={18} color="#fff" strokeWidth={3} />
           : isCounter ? <Plus size={16} color="var(--placeholder)" />
@@ -90,36 +88,32 @@ function HabitCard({ habit, log, onComplete, onIncrement, onLongPress }) {
   )
 }
 
-// ---------- Long-press menu ----------
-function HabitMenu({ habit, onClose, onEdit, onPause, onDelete }) {
+// ---------- Delete confirmation ----------
+function ConfirmDelete({ habit, onClose, onConfirm }) {
   return (
     <>
       <div className="sheet-backdrop" onClick={onClose} />
       <div className="sheet" style={{ paddingBottom: 'calc(32px + env(safe-area-inset-bottom))' }}>
         <div className="sheet-grab" />
-        <div className="t-section" style={{ marginBottom: 16 }}>{habit.name}</div>
-        <MenuItem icon={Pencil} label="Edit" onClick={() => onEdit(habit)} />
-        <MenuItem icon={habit.paused ? Play : Pause} label={habit.paused ? 'Resume' : 'Pause'} onClick={() => onPause(habit)} />
-        <MenuItem icon={Trash2} label="Delete" danger onClick={() => onDelete(habit)} />
+        <div className="t-section" style={{ marginBottom: 8 }}>Delete "{habit.name}"?</div>
+        <p className="t-help" style={{ marginBottom: 24 }}>
+          This removes the habit and all its history. This can't be undone.
+        </p>
+        <button className="btn-primary" style={{ background: 'var(--error)', marginBottom: 12 }}
+          onClick={() => onConfirm(habit)}>Delete habit</button>
+        <button className="btn-ghost" style={{ width: '100%' }} onClick={onClose}>Keep it</button>
       </div>
     </>
-  )
-}
-function MenuItem({ icon: I, label, onClick, danger }) {
-  return (
-    <button onClick={onClick} className="row" style={{ gap: 14, padding: '16px 4px', width: '100%' }}>
-      <I size={20} color={danger ? 'var(--error)' : 'var(--text-2)'} />
-      <span className="t-card" style={{ fontWeight: 500, color: danger ? 'var(--error)' : 'var(--text)' }}>{label}</span>
-    </button>
   )
 }
 
 export default function App() {
   const [tab, setTab] = useState('home')
-  const [{ habits, log }, setState] = useState({ habits: [], log: {} })
+  const [{ habits, log, entries }, setState] = useState({ habits: [], log: {}, entries: {} })
   const [showCreate, setShowCreate] = useState(false)
   const [editing, setEditing] = useState(null)
-  const [menuHabit, setMenuHabit] = useState(null)
+  const [detailHabit, setDetailHabit] = useState(null)
+  const [confirmHabit, setConfirmHabit] = useState(null)
   const [online, setOnline] = useState(navigator.onLine)
   const [syncing, setSyncing] = useState(false)
   const [lastSync, setLastSync] = useState(null)
@@ -127,12 +121,12 @@ export default function App() {
   // Load once
   useEffect(() => {
     const local = loadLocal()
-    setState({ habits: local.habits, log: local.log })
+    setState({ habits: local.habits, log: local.log, entries: local.entries || {} })
     setLastSync(local.meta?.lastSync || null)
   }, [])
 
   // Persist on change
-  useEffect(() => { saveLocal({ habits, log }) }, [habits, log])
+  useEffect(() => { saveLocal({ habits, log, entries }) }, [habits, log, entries])
 
   // Online/offline listeners
   useEffect(() => {
@@ -145,11 +139,10 @@ export default function App() {
   const doSync = useCallback(async () => {
     if (!syncEnabled || !online) return
     setSyncing(true)
-    // Anonymous single-user id kept locally; swap for auth later.
     let userId = localStorage.getItem('callen_uid')
-    if (!userId) { userId = 'callen-' + Math.random().toString(36).slice(2); localStorage.setItem('callen_uid', userId) }
+    if (!userId) { userId = 'user-' + Math.random().toString(36).slice(2); localStorage.setItem('callen_uid', userId) }
     const cloud = await pullFromCloud(userId)
-    let merged = { habits, log }
+    let merged = { habits, log, entries }
     if (cloud) {
       const byId = Object.fromEntries(habits.map(h => [h.id, h]))
       cloud.habits.forEach(h => { if (!byId[h.id]) byId[h.id] = h })
@@ -157,23 +150,44 @@ export default function App() {
       Object.entries(log).forEach(([hid, days]) => {
         mergedLog[hid] = { ...(mergedLog[hid] || {}), ...days }
       })
-      merged = { habits: Object.values(byId), log: mergedLog }
+      const mergedEntries = { ...(cloud.entries || {}) }
+      Object.entries(entries).forEach(([hid, days]) => {
+        mergedEntries[hid] = { ...(mergedEntries[hid] || {}), ...days }
+      })
+      merged = { habits: Object.values(byId), log: mergedLog, entries: mergedEntries }
       setState(merged)
     }
     await pushToCloud(userId, merged)
     const now = new Date().toISOString()
     setLastSync(now); saveLocal({ meta: { lastSync: now } })
     setSyncing(false)
-  }, [habits, log, online])
+  }, [habits, log, entries, online])
 
   useEffect(() => { if (online && syncEnabled) doSync() /* eslint-disable-next-line */ }, [online])
 
   // ----- mutations -----
   const setLog = (fn) => setState(s => ({ ...s, log: fn(s.log) }))
 
+  const doneValue = (habit) => habit.goalType === 'Simple Check' ? 'done' : (habit.goalTarget || 1)
+
   const completeHabit = (habit) => {
-    setLog(l => ({ ...l, [habit.id]: { ...(l[habit.id] || {}), [todayKey()]:
-      habit.goalType === 'Simple Check' ? 'done' : (habit.goalTarget || 1) } }))
+    setLog(l => ({ ...l, [habit.id]: { ...(l[habit.id] || {}), [todayKey()]: doneValue(habit) } }))
+  }
+  const undoHabit = (habit, dateK = todayKey()) => {
+    setLog(l => {
+      const days = { ...(l[habit.id] || {}) }
+      delete days[dateK]
+      return { ...l, [habit.id]: days }
+    })
+  }
+  // Toggle done for any date (used by the detail page)
+  const toggleDoneOn = (habit, dateK) => {
+    setLog(l => {
+      const days = { ...(l[habit.id] || {}) }
+      if (isDone(habit, { [habit.id]: days }, dateK)) delete days[dateK]
+      else days[dateK] = doneValue(habit)
+      return { ...l, [habit.id]: days }
+    })
   }
   const incrementHabit = (habit) => {
     setLog(l => {
@@ -181,21 +195,32 @@ export default function App() {
       return { ...l, [habit.id]: { ...(l[habit.id] || {}), [todayKey()]: cur + 1 } }
     })
   }
+  const saveEntry = (habit, dateK, entry) => {
+    setState(s => ({
+      ...s,
+      entries: { ...s.entries, [habit.id]: { ...(s.entries[habit.id] || {}), [dateK]: entry } },
+    }))
+  }
   const saveHabit = (habit) => {
     setState(s => {
       const exists = s.habits.some(h => h.id === habit.id)
       return { ...s, habits: exists ? s.habits.map(h => h.id === habit.id ? habit : h) : [...s.habits, habit] }
     })
     setShowCreate(false); setEditing(null)
+    if (detailHabit) setDetailHabit(habit)
   }
   const deleteHabit = (habit) => {
     setState(s => ({ ...s, habits: s.habits.filter(h => h.id !== habit.id) }))
-    setMenuHabit(null)
+    setConfirmHabit(null); setDetailHabit(null)
   }
   const pauseHabit = (habit) => {
-    setState(s => ({ ...s, habits: s.habits.map(h => h.id === habit.id ? { ...h, paused: !h.paused } : h) }))
-    setMenuHabit(null)
+    const updated = { ...habit, paused: !habit.paused }
+    setState(s => ({ ...s, habits: s.habits.map(h => h.id === habit.id ? updated : h) }))
+    if (detailHabit) setDetailHabit(updated)
   }
+
+  // Keep the detail page in sync with the latest habit object
+  const liveDetail = detailHabit ? habits.find(h => h.id === detailHabit.id) || detailHabit : null
 
   // Today's active habits
   const now = new Date()
@@ -203,12 +228,33 @@ export default function App() {
   const pending = todays.filter(h => !isDone(h, log))
   const completed = todays.filter(h => isDone(h, log))
 
+  // Full-screen detail view takes over
+  if (liveDetail) {
+    return (
+      <div className="app">
+        <HabitDetail
+          habit={liveDetail} log={log} entries={entries}
+          onBack={() => setDetailHabit(null)}
+          onEdit={(h) => { setEditing(h); setShowCreate(true) }}
+          onPause={pauseHabit}
+          onDelete={(h) => setConfirmHabit(h)}
+          onToggleDone={toggleDoneOn}
+          onSaveEntry={saveEntry}
+        />
+        {showCreate && <CreateHabit onClose={() => { setShowCreate(false); setEditing(null) }}
+          onSave={saveHabit} editing={editing} />}
+        {confirmHabit && <ConfirmDelete habit={confirmHabit}
+          onClose={() => setConfirmHabit(null)} onConfirm={deleteHabit} />}
+      </div>
+    )
+  }
+
   return (
     <div className="app">
       {tab === 'home' && (
         <Home user={USER} pending={pending} completed={completed} todays={todays} log={log}
           online={online} syncing={syncing} lastSync={lastSync} onSync={doSync}
-          onComplete={completeHabit} onIncrement={incrementHabit} onLongPress={setMenuHabit} />
+          onComplete={completeHabit} onUndo={undoHabit} onIncrement={incrementHabit} onOpen={setDetailHabit} />
       )}
       {tab === 'calendar' && <Calendar habits={habits} log={log} />}
       {tab === 'insights' && <Insights habits={habits} log={log} />}
@@ -230,9 +276,8 @@ export default function App() {
 
       {showCreate && <CreateHabit onClose={() => { setShowCreate(false); setEditing(null) }}
         onSave={saveHabit} editing={editing} />}
-      {menuHabit && <HabitMenu habit={menuHabit} onClose={() => setMenuHabit(null)}
-        onEdit={(h) => { setMenuHabit(null); setEditing(h); setShowCreate(true) }}
-        onPause={pauseHabit} onDelete={deleteHabit} />}
+      {confirmHabit && <ConfirmDelete habit={confirmHabit}
+        onClose={() => setConfirmHabit(null)} onConfirm={deleteHabit} />}
     </div>
   )
 }
@@ -248,9 +293,10 @@ function Tab({ id, label, icon: I, tab, setTab }) {
 
 // ---------- HOME ----------
 function Home({ user, pending, completed, todays, log, online, syncing, lastSync, onSync,
-  onComplete, onIncrement, onLongPress }) {
+  onComplete, onUndo, onIncrement, onOpen }) {
   const hour = new Date().getHours()
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
+  const todayStr = new Date().toLocaleDateString('default', { weekday: 'long', month: 'long', day: 'numeric' })
   const doneCount = completed.length
   const allDone = todays.length > 0 && pending.length === 0
 
@@ -263,7 +309,7 @@ function Home({ user, pending, completed, todays, log, online, syncing, lastSync
         </div>
         <SyncStatus online={online} syncing={syncing} lastSync={lastSync} onSync={onSync} />
       </div>
-      <p className="t-help" style={{ marginBottom: 20 }}>Your habits are ready when you are.</p>
+      <p className="t-help" style={{ marginBottom: 20 }}>{todayStr}</p>
 
       {/* Progress ring card */}
       <div className="card row" style={{ padding: 20, gap: 20, marginBottom: 8 }}>
@@ -285,7 +331,7 @@ function Home({ user, pending, completed, todays, log, online, syncing, lastSync
           <div className="section-head"><span className="t-section">Today's Habits</span></div>
           {pending.map(h => (
             <HabitCard key={h.id} habit={h} log={log} onComplete={onComplete}
-              onIncrement={onIncrement} onLongPress={onLongPress} />
+              onUndo={onUndo} onIncrement={onIncrement} onOpen={onOpen} />
           ))}
         </>
       )}
@@ -305,7 +351,8 @@ function Home({ user, pending, completed, todays, log, online, syncing, lastSync
           {completed.map(h => {
             const Icon = ICONS[h.icon] || ICONS.Droplets
             return (
-              <div key={h.id} className="row" style={{ gap: 12, padding: '10px 4px', opacity: 0.6 }}>
+              <div key={h.id} className="row" onClick={() => onOpen(h)} role="button"
+                style={{ gap: 12, padding: '10px 4px', opacity: 0.6, cursor: 'pointer' }}>
                 <div className="habit-icon" style={{ background: h.color + '18', width: 38, height: 38 }}>
                   <Icon size={18} color={h.color} />
                 </div>

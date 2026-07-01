@@ -10,6 +10,7 @@ export const syncEnabled = !!supabase
 
 const KEY = 'callen_habits_v1'
 const LOG_KEY = 'callen_log_v1'   // completion log: { habitId: { 'YYYY-MM-DD': 'done' | 'skip' | count } }
+const ENTRY_KEY = 'callen_entries_v1' // per-day details: { habitId: { 'YYYY-MM-DD': { note, checklist:[{id,text,done}] } } }
 const META_KEY = 'callen_meta_v1'
 
 export function loadLocal() {
@@ -17,23 +18,25 @@ export function loadLocal() {
     return {
       habits: JSON.parse(localStorage.getItem(KEY) || '[]'),
       log: JSON.parse(localStorage.getItem(LOG_KEY) || '{}'),
+      entries: JSON.parse(localStorage.getItem(ENTRY_KEY) || '{}'),
       meta: JSON.parse(localStorage.getItem(META_KEY) || '{}'),
     }
   } catch {
-    return { habits: [], log: {}, meta: {} }
+    return { habits: [], log: {}, entries: {}, meta: {} }
   }
 }
 
-export function saveLocal({ habits, log, meta }) {
+export function saveLocal({ habits, log, entries, meta }) {
   if (habits) localStorage.setItem(KEY, JSON.stringify(habits))
   if (log) localStorage.setItem(LOG_KEY, JSON.stringify(log))
+  if (entries) localStorage.setItem(ENTRY_KEY, JSON.stringify(entries))
   if (meta) localStorage.setItem(META_KEY, JSON.stringify(meta))
 }
 
 // --- Supabase sync (only runs when connected + configured) ---
 // Table schema is provided in the setup instructions.
 
-export async function pushToCloud(userId, { habits, log }) {
+export async function pushToCloud(userId, { habits, log, entries }) {
   if (!supabase || !userId) return { ok: false, reason: 'no-sync' }
   try {
     const { error: e1 } = await supabase
@@ -49,7 +52,20 @@ export async function pushToCloud(userId, { habits, log }) {
         ),
         { onConflict: 'id' }
       )
-    if (e1 || e2) return { ok: false, reason: (e1 || e2).message }
+    let e3 = null
+    if (entries && Object.keys(entries).length) {
+      const rows = Object.entries(entries).flatMap(([habitId, days]) =>
+        Object.entries(days).map(([date, entry]) => ({
+          id: `${habitId}_${date}`, habit_id: habitId, user_id: userId, date,
+          note: entry.note || '', checklist: entry.checklist || [],
+        }))
+      )
+      if (rows.length) {
+        const res = await supabase.from('habit_entries').upsert(rows, { onConflict: 'id' })
+        e3 = res.error
+      }
+    }
+    if (e1 || e2 || e3) return { ok: false, reason: (e1 || e2 || e3).message }
     return { ok: true }
   } catch (err) {
     return { ok: false, reason: err.message }
@@ -61,12 +77,18 @@ export async function pullFromCloud(userId) {
   try {
     const { data: habits } = await supabase.from('habits').select('*').eq('user_id', userId)
     const { data: rows } = await supabase.from('habit_log').select('*').eq('user_id', userId)
+    const { data: entryRows } = await supabase.from('habit_entries').select('*').eq('user_id', userId)
     const log = {}
     ;(rows || []).forEach(r => {
       log[r.habit_id] = log[r.habit_id] || {}
       log[r.habit_id][r.date] = isNaN(+r.value) ? r.value : +r.value
     })
-    return { habits: habits || [], log }
+    const entries = {}
+    ;(entryRows || []).forEach(r => {
+      entries[r.habit_id] = entries[r.habit_id] || {}
+      entries[r.habit_id][r.date] = { note: r.note || '', checklist: r.checklist || [] }
+    })
+    return { habits: habits || [], log, entries }
   } catch {
     return null
   }
