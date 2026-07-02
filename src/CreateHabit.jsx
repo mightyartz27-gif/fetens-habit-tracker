@@ -2,7 +2,11 @@ import { useState } from 'react'
 import { X, ChevronLeft, ChevronRight, Bell } from 'lucide-react'
 import { ICONS, ICON_LIST, COLORS, REPEATS, GOAL_TYPES, uid, haptic } from './helpers'
 
-const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+// Monday-first picker. Value stored is JS weekday (0=Sun..6=Sat) for scheduledOn compatibility.
+const DAY_PICKER = [
+  { label: 'M', dow: 1 }, { label: 'T', dow: 2 }, { label: 'W', dow: 3 },
+  { label: 'T', dow: 4 }, { label: 'F', dow: 5 }, { label: 'S', dow: 6 }, { label: 'S', dow: 0 },
+]
 
 export default function CreateHabit({ onClose, onSave, editing }) {
   const [step, setStep] = useState(1)
@@ -129,14 +133,14 @@ export default function CreateHabit({ onClose, onSave, editing }) {
               </div>
               {repeat === 'Specific Days' && (
                 <div className="row" style={{ gap: 8, marginTop: 20, justifyContent: 'space-between' }}>
-                  {DOW.map((d, i) => (
-                    <button key={i} onClick={() => toggleDay(i)}
+                  {DAY_PICKER.map(({ label, dow }) => (
+                    <button key={dow} onClick={() => toggleDay(dow)}
                       style={{
                         width: 42, height: 42, borderRadius: 999, fontWeight: 600,
-                        background: days.includes(i) ? 'var(--purple)' : 'var(--card)',
-                        color: days.includes(i) ? '#fff' : 'var(--text-2)',
+                        background: days.includes(dow) ? 'var(--purple)' : 'var(--card)',
+                        color: days.includes(dow) ? '#fff' : 'var(--text-2)',
                         border: '1.5px solid var(--border)',
-                      }}>{d}</button>
+                      }}>{label}</button>
                   ))}
                 </div>
               )}

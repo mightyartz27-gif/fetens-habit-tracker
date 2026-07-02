@@ -27,8 +27,22 @@ export const REPEATS = ['Daily', 'Weekdays', 'Weekends', 'Specific Days']
 export const GOAL_TYPES = ['Simple Check', 'Counter', 'Timer']
 
 export function todayKey(d = new Date()) {
-  return d.toISOString().slice(0, 10)
+  // Use LOCAL date, not UTC — otherwise evening completions in +1 timezones
+  // land on the wrong day.
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
+
+// Monday-first day-of-week: returns 0=Mon .. 6=Sun
+export function mondayDow(date) {
+  return (date.getDay() + 6) % 7
+}
+
+// Weekday labels, Monday first
+export const WEEK_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
+export const WEEK_LABELS_FULL = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 export function tint(hex, alpha = '20') {
   return hex + alpha
@@ -116,3 +130,42 @@ export function fireConfetti() {
 }
 
 export const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36)
+
+// ---------- New-feature helpers ----------
+
+// Icons for countdowns, priorities, etc.
+export const PRIORITIES = ['Low', 'Medium', 'High']
+export const PRIORITY_COLOR = { Low: '#38BDF8', Medium: '#F59E0B', High: '#EF4444' }
+export const TODO_REPEATS = ['None', 'Daily', 'Weekly', 'Monthly']
+
+export const COUNTDOWN_ICONS = ['🎂', '🏖️', '💰', '📚', '❤️', '🔁', '✈️', '🎉', '💍', '🏠']
+export const GOAL_CATEGORIES = ['Yearly', 'Monthly', 'Personal', 'Health', 'Financial', 'Study']
+
+// Days between today and a date string (YYYY-MM-DD). Positive = future.
+export function daysUntil(dateStr) {
+  if (!dateStr) return 0
+  const target = new Date(dateStr + 'T00:00:00')
+  const now = new Date()
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  return Math.round((target - midnight) / 86400000)
+}
+
+// Does a todo fall on a given date? Handles repeats.
+export function todoOnDate(todo, date) {
+  if (!todo.due) return false
+  const dueKey = todo.due
+  const dKey = todayKey(date)
+  if (todo.repeat === 'None' || !todo.repeat) return dueKey === dKey
+  const due = new Date(dueKey + 'T00:00:00')
+  if (date < new Date(due.getFullYear(), due.getMonth(), due.getDate())) return false
+  if (todo.repeat === 'Daily') return true
+  if (todo.repeat === 'Weekly') return date.getDay() === due.getDay()
+  if (todo.repeat === 'Monthly') return date.getDate() === due.getDate()
+  return dueKey === dKey
+}
+
+// Format a date string nicely
+export function prettyDate(dateStr) {
+  if (!dateStr) return ''
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('default', { month: 'short', day: 'numeric', year: 'numeric' })
+}

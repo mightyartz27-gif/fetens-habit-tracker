@@ -34,6 +34,27 @@
   font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
+[data-theme="dark"] {
+  --purple: #A78BFA;
+  --purple-2: #C084FC;
+  --purple-light: #3B2F5E;
+  --lavender: #241E38;
+  --pink: #F472B6;
+  --success: #4ADE80;
+  --warning: #FBBF24;
+  --error: #F87171;
+
+  --bg: #14121C;
+  --card: #1E1B29;
+  --border: #2E2A3D;
+  --text: #F5F3FF;
+  --text-2: #A5A0B8;
+  --placeholder: #6B6880;
+
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
 html, body {
@@ -120,7 +141,6 @@ input, textarea, select { font-family: inherit; }
   z-index: 45;
   transition: transform var(--dur) var(--ease);
 }
-.fab:active { transform: translateX(-50%) scale(0.92); }
 
 /* Tab bar */
 .tabbar {
@@ -128,7 +148,7 @@ input, textarea, select { font-family: inherit; }
   width: 100%; max-width: 480px;
   display: flex; justify-content: space-around; align-items: center;
   padding: 10px 8px calc(10px + env(safe-area-inset-bottom));
-  background: rgba(255,255,255,0.85);
+  background: color-mix(in srgb, var(--card) 85%, transparent);
   backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
   border-top: 1px solid var(--border);
   z-index: 30;
@@ -239,3 +259,98 @@ input, textarea, select { font-family: inherit; }
 
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.fab:active { transform: translateX(-50%) scale(0.92); }
+
+/* ---------- New feature styles ---------- */
+
+/* Segmented control (Week/Month/Year, Weekly/Monthly/Yearly) */
+.seg { display: flex; gap: 6px; background: var(--lavender); padding: 4px; border-radius: 14px; }
+.seg button { flex: 1; padding: 8px; border-radius: 10px; font-size: 13px; font-weight: 600; color: var(--text-2); transition: all var(--dur) var(--ease); }
+.seg button.active { background: var(--card); color: var(--purple); box-shadow: var(--shadow-soft); }
+
+/* Priority dot */
+.pri-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; }
+
+/* Progress bar (goals) */
+.pbar { height: 8px; border-radius: 999px; background: var(--purple-light); overflow: hidden; }
+.pbar > div { height: 100%; border-radius: 999px; transition: width 500ms var(--ease); }
+
+/* Timeline (daily planner) */
+.timeline { position: relative; padding-left: 56px; }
+.tl-row { position: relative; min-height: 56px; padding: 4px 0; }
+.tl-time { position: absolute; left: -56px; top: 6px; width: 46px; text-align: right; font-size: 12px; font-weight: 600; color: var(--text-2); }
+.tl-line { position: absolute; left: -14px; top: 0; bottom: 0; width: 2px; background: var(--border); }
+.tl-dot { position: absolute; left: -19px; top: 10px; width: 12px; height: 12px; border-radius: 999px; border: 2px solid var(--bg); }
+.tl-event { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; box-shadow: var(--shadow-soft); }
+
+/* Countdown row */
+.cd-days { font-size: 22px; font-weight: 800; line-height: 1; }
+
+/* Swipe hint underlay */
+.swipe-wrap { position: relative; overflow: hidden; border-radius: var(--r-card); margin-bottom: 12px; }
+.swipe-action { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; width: 80px; }
+.swipe-complete { left: 0; background: var(--success); }
+.swipe-edit { right: 0; background: var(--purple); }
+
+/* Chooser modal (Habit vs To-do) */
+.chooser-opt { display: flex; align-items: center; gap: 16px; padding: 20px; border-radius: var(--r-card); border: 1.5px solid var(--border); background: var(--card); width: 100%; margin-bottom: 12px; transition: all var(--dur) var(--ease); text-align: left; }
+.chooser-opt:active { transform: scale(0.98); border-color: var(--purple); }
+
+/* Colorful habit card variants (inspiration screenshots) */
+.habit-card.tinted { border: none; }
+
+/* Segment scroll for day strip */
+.daystrip { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0; scrollbar-width: none; }
+.daystrip::-webkit-scrollbar { display: none; }
+.daycol { flex-shrink: 0; width: 44px; text-align: center; }
+.daycol .num { width: 40px; height: 40px; border-radius: 999px; display: grid; place-items: center; margin: 4px auto 0; font-weight: 600; font-size: 15px; }
+.daycol.active .num { background: var(--purple); color: #fff; }
+
+/* Pull to refresh */
+.ptr { text-align: center; overflow: hidden; transition: height 200ms var(--ease); }
+
+/* Empty state illustration circle */
+.empty-ill { width: 72px; height: 72px; border-radius: 999px; background: var(--lavender); display: grid; place-items: center; margin: 0 auto 14px; font-size: 34px; }
+
+/* ---------- Keyboard / input visibility fix ---------- */
+/* Sheets scroll, and inputs scroll into view on focus (handled in JS too) */
+.sheet { scroll-padding-bottom: 40px; }
+textarea.input { resize: none; }
+
+/* ---------- Create-type chooser ---------- */
+.chooser-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.chooser-btn {
+  padding: 24px 16px; border-radius: var(--r-card); border: 1.5px solid var(--border);
+  background: var(--card); display: flex; flex-direction: column; align-items: center; gap: 10px;
+  transition: all var(--dur) var(--ease);
+}
+.chooser-btn:active { transform: scale(0.97); }
+.chooser-ic { width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center; }
+
+/* ---------- Priority pill ---------- */
+.pri-pill { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+
+/* ---------- Progress bar ---------- */
+.pbar { height: 8px; border-radius: 999px; background: var(--purple-light); overflow: hidden; }
+.pbar > i { display: block; height: 100%; border-radius: 999px; transition: width 500ms var(--ease); }
+
+/* ---------- Timeline (day planner) ---------- */
+.tl-row { display: grid; grid-template-columns: 56px 1fr; gap: 12px; min-height: 56px; }
+.tl-time { font-size: 12px; font-weight: 600; color: var(--text-2); padding-top: 2px; text-align: right; }
+.tl-track { position: relative; border-left: 2px solid var(--border); padding: 0 0 20px 16px; }
+.tl-dot { position: absolute; left: -7px; top: 2px; width: 12px; height: 12px; border-radius: 999px; border: 2px solid var(--card); }
+.tl-event { border-radius: 12px; padding: 10px 12px; margin-bottom: 6px; }
+
+/* ---------- Countdown card ---------- */
+.cd-num { font-size: 22px; font-weight: 800; line-height: 1; }
+
+/* ---------- Segment control ---------- */
+.seg { display: flex; background: var(--lavender); border-radius: 12px; padding: 4px; gap: 4px; }
+.seg button { flex: 1; padding: 8px; border-radius: 9px; font-size: 13px; font-weight: 600; color: var(--text-2); transition: all var(--dur) var(--ease); }
+.seg button.active { background: var(--card); color: var(--purple); box-shadow: var(--shadow-soft); }
+
+/* ---------- Swipe hint ---------- */
+.swipe-wrap { position: relative; overflow: hidden; border-radius: var(--r-card); }
+
+/* colorful soft card tints reused via inline styles */

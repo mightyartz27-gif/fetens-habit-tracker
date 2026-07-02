@@ -1,71 +1,78 @@
 import { createClient } from '@supabase/supabase-js'
 
-// Supabase is OPTIONAL. The app works fully offline using localStorage.
-// When these env vars are set (see .env), sync turns on automatically.
 const url = import.meta.env.VITE_SUPABASE_URL
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 export const supabase = (url && key) ? createClient(url, key) : null
 export const syncEnabled = !!supabase
 
-const KEY = 'callen_habits_v1'
-const LOG_KEY = 'callen_log_v1'   // completion log: { habitId: { 'YYYY-MM-DD': 'done' | 'skip' | count } }
-const ENTRY_KEY = 'callen_entries_v1' // per-day details: { habitId: { 'YYYY-MM-DD': { note, checklist:[{id,text,done}] } } }
-const META_KEY = 'callen_meta_v1'
+// LocalStorage keys. Original names kept so existing data survives.
+const K = {
+  habits: 'callen_habits_v1',
+  log: 'callen_log_v1',
+  entries: 'callen_entries_v1',
+  todos: 'feten_todos_v1',
+  countdowns: 'feten_countdowns_v1',
+  goals: 'feten_goals_v1',
+  wishlist: 'feten_wishlist_v1',
+  planner: 'feten_planner_v1',
+  settings: 'feten_settings_v1',
+  meta: 'callen_meta_v1',
+}
+
+function readJSON(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)) }
+  catch { return fallback }
+}
 
 export function loadLocal() {
-  try {
-    return {
-      habits: JSON.parse(localStorage.getItem(KEY) || '[]'),
-      log: JSON.parse(localStorage.getItem(LOG_KEY) || '{}'),
-      entries: JSON.parse(localStorage.getItem(ENTRY_KEY) || '{}'),
-      meta: JSON.parse(localStorage.getItem(META_KEY) || '{}'),
-    }
-  } catch {
-    return { habits: [], log: {}, entries: {}, meta: {} }
+  return {
+    habits: readJSON(K.habits, []),
+    log: readJSON(K.log, {}),
+    entries: readJSON(K.entries, {}),
+    todos: readJSON(K.todos, []),
+    countdowns: readJSON(K.countdowns, []),
+    goals: readJSON(K.goals, []),
+    wishlist: readJSON(K.wishlist, []),
+    planner: readJSON(K.planner, []),
+    settings: readJSON(K.settings, { theme: 'light', firstDay: 'Mon' }),
+    meta: readJSON(K.meta, {}),
   }
 }
 
-export function saveLocal({ habits, log, entries, meta }) {
-  if (habits) localStorage.setItem(KEY, JSON.stringify(habits))
-  if (log) localStorage.setItem(LOG_KEY, JSON.stringify(log))
-  if (entries) localStorage.setItem(ENTRY_KEY, JSON.stringify(entries))
-  if (meta) localStorage.setItem(META_KEY, JSON.stringify(meta))
+export function saveLocal(patch) {
+  for (const [name, val] of Object.entries(patch)) {
+    if (val === undefined) continue
+    if (K[name]) localStorage.setItem(K[name], JSON.stringify(val))
+  }
 }
 
-// --- Supabase sync (only runs when connected + configured) ---
-// Table schema is provided in the setup instructions.
-
-export async function pushToCloud(userId, { habits, log, entries }) {
+// ---------- Supabase sync ----------
+export async function pushToCloud(userId, data) {
   if (!supabase || !userId) return { ok: false, reason: 'no-sync' }
+  const errors = []
+  const up = async (table, rows, conflict = 'id') => {
+    if (!rows || !rows.length) return
+    const { error } = await supabase.from(table).upsert(rows, { onConflict: conflict })
+    if (error) errors.push(`${table}: ${error.message}`)
+  }
   try {
-    const { error: e1 } = await supabase
-      .from('habits')
-      .upsert(habits.map(h => ({ ...h, user_id: userId })), { onConflict: 'id' })
-    const { error: e2 } = await supabase
-      .from('habit_log')
-      .upsert(
-        Object.entries(log).flatMap(([habitId, days]) =>
-          Object.entries(days).map(([date, value]) => ({
-            id: `${habitId}_${date}`, habit_id: habitId, user_id: userId, date, value: String(value),
-          }))
-        ),
-        { onConflict: 'id' }
-      )
-    let e3 = null
-    if (entries && Object.keys(entries).length) {
-      const rows = Object.entries(entries).flatMap(([habitId, days]) =>
-        Object.entries(days).map(([date, entry]) => ({
-          id: `${habitId}_${date}`, habit_id: habitId, user_id: userId, date,
-          note: entry.note || '', checklist: entry.checklist || [],
-        }))
-      )
-      if (rows.length) {
-        const res = await supabase.from('habit_entries').upsert(rows, { onConflict: 'id' })
-        e3 = res.error
-      }
-    }
-    if (e1 || e2 || e3) return { ok: false, reason: (e1 || e2 || e3).message }
+    await up('habits', (data.habits || []).map(h => ({ ...h, user_id: userId })))
+    await up('habit_log', Object.entries(data.log || {}).flatMap(([habitId, days]) =>
+      Object.entries(days).map(([date, value]) => ({
+        id: `${habitId}_${date}`, habit_id: habitId, user_id: userId, date, value: String(value),
+      }))))
+    await up('habit_entries', Object.entries(data.entries || {}).flatMap(([habitId, days]) =>
+      Object.entries(days).map(([date, e]) => ({
+        id: `${habitId}_${date}`, habit_id: habitId, user_id: userId, date,
+        note: e.note || '', checklist: e.checklist || [],
+      }))))
+    await up('todos', (data.todos || []).map(t => ({ ...t, user_id: userId })))
+    await up('countdowns', (data.countdowns || []).map(c => ({ ...c, user_id: userId })))
+    await up('goals', (data.goals || []).map(g => ({ ...g, user_id: userId })))
+    await up('wishlist', (data.wishlist || []).map(w => ({ ...w, user_id: userId })))
+    await up('planner', (data.planner || []).map(p => ({ ...p, user_id: userId })))
+    if (errors.length) return { ok: false, reason: errors.join('; ') }
     return { ok: true }
   } catch (err) {
     return { ok: false, reason: err.message }
@@ -74,22 +81,31 @@ export async function pushToCloud(userId, { habits, log, entries }) {
 
 export async function pullFromCloud(userId) {
   if (!supabase || !userId) return null
+  const get = async (table) => {
+    try { const { data } = await supabase.from(table).select('*').eq('user_id', userId); return data || [] }
+    catch { return [] }
+  }
   try {
-    const { data: habits } = await supabase.from('habits').select('*').eq('user_id', userId)
-    const { data: rows } = await supabase.from('habit_log').select('*').eq('user_id', userId)
-    const { data: entryRows } = await supabase.from('habit_entries').select('*').eq('user_id', userId)
+    const [habits, logRows, entryRows, todos, countdowns, goals, wishlist, planner] = await Promise.all([
+      get('habits'), get('habit_log'), get('habit_entries'), get('todos'),
+      get('countdowns'), get('goals'), get('wishlist'), get('planner'),
+    ])
     const log = {}
-    ;(rows || []).forEach(r => {
-      log[r.habit_id] = log[r.habit_id] || {}
-      log[r.habit_id][r.date] = isNaN(+r.value) ? r.value : +r.value
-    })
+    logRows.forEach(r => { (log[r.habit_id] = log[r.habit_id] || {})[r.date] = isNaN(+r.value) ? r.value : +r.value })
     const entries = {}
-    ;(entryRows || []).forEach(r => {
-      entries[r.habit_id] = entries[r.habit_id] || {}
-      entries[r.habit_id][r.date] = { note: r.note || '', checklist: r.checklist || [] }
-    })
-    return { habits: habits || [], log, entries }
+    entryRows.forEach(r => { (entries[r.habit_id] = entries[r.habit_id] || {})[r.date] = { note: r.note || '', checklist: r.checklist || [] } })
+    const strip = (arr) => arr.map(({ user_id, ...rest }) => rest)
+    return {
+      habits: strip(habits), log, entries,
+      todos: strip(todos), countdowns: strip(countdowns),
+      goals: strip(goals), wishlist: strip(wishlist), planner: strip(planner),
+    }
   } catch {
     return null
   }
+}
+
+export async function deleteFromCloud(table, id) {
+  if (!supabase) return
+  try { await supabase.from(table).delete().eq('id', id) } catch { /* ignore */ }
 }
