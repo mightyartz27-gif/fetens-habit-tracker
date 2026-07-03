@@ -15,7 +15,7 @@ import HabitDetail from './HabitDetail'
 import Lockscreen from './Lockscreen'
 import {
   TodoCard, CreateTodo, CreateCountdown, CreateGoal,
-  CreateWish, CreatePlannerEvent, CreateChooser, ConfirmDialog, useLongPress,
+  CreateWish, CreatePlannerEvent, CreateChooser, ConfirmDialog, useLongPress, WishRow,
 } from './features'
 import {
   PlannerTimeline, CountdownsPage, GoalsPage, WishlistPage, EmptyCard,
@@ -65,7 +65,7 @@ function HabitCard({ habit, log, onComplete, onUndo, onIncrement, onOpen, onLong
   }
 
   return (
-    <div className={`habit-card ${glow ? 'glow' : ''}`} {...lp} onClick={() => onOpen(habit)} role="button"
+    <div className={`habit-card ${glow ? 'glow' : ''}`} {...lp.handlers} onClick={(e) => { if (!lp.suppressClick(e)) onOpen(habit) }} role="button"
       style={{ opacity: done ? 0.72 : 1 }}>
       <div className="habit-icon" style={{ background: habit.color + '20' }}>
         <Icon size={24} color={habit.color} />
@@ -136,35 +136,45 @@ export default function App() {
     let userId = localStorage.getItem('callen_uid')
     if (!userId) { userId = 'user-' + Math.random().toString(36).slice(2); localStorage.setItem('callen_uid', userId) }
     const cloud = await pullFromCloud(userId)
-    let merged = data
-    if (cloud) {
-      const mergeList = (localArr, cloudArr) => {
-        const byId = Object.fromEntries((cloudArr || []).map(x => [x.id, x]))
-        ;(localArr || []).forEach(x => { byId[x.id] = x })
-        return Object.values(byId)
-      }
-      const mergeMap = (localMap, cloudMap) => {
-        const out = { ...(cloudMap || {}) }
-        Object.entries(localMap || {}).forEach(([k, v]) => { out[k] = { ...(out[k] || {}), ...v } })
-        return out
-      }
-      merged = {
-        habits: mergeList(habits, cloud.habits),
-        log: mergeMap(log, cloud.log),
-        entries: mergeMap(entries, cloud.entries),
-        todos: mergeList(todos, cloud.todos),
-        countdowns: mergeList(countdowns, cloud.countdowns),
-        goals: mergeList(goals, cloud.goals),
-        wishlist: mergeList(wishlist, cloud.wishlist),
-        planner: mergeList(planner, cloud.planner),
-      }
-      setData(merged)
+
+    const mergeList = (localArr, cloudArr) => {
+      // Local wins on id conflicts, so freshly-created local items are never
+      // clobbered by an older cloud copy.
+      const byId = Object.fromEntries((cloudArr || []).map(x => [x.id, x]))
+      ;(localArr || []).forEach(x => { byId[x.id] = x })
+      return Object.values(byId)
     }
-    await pushToCloud(userId, merged)
+    const mergeMap = (localMap, cloudMap) => {
+      const out = { ...(cloudMap || {}) }
+      Object.entries(localMap || {}).forEach(([k, v]) => { out[k] = { ...(out[k] || {}), ...v } })
+      return out
+    }
+
+    // Build the merged result from the LATEST state (functional update),
+    // not from a stale closure. This prevents a sync that started before a
+    // create/edit from overwriting the new item.
+    let pushPayload = null
+    setData(cur => {
+      if (!cloud) { pushPayload = cur; return cur }
+      const merged = {
+        habits: mergeList(cur.habits, cloud.habits),
+        log: mergeMap(cur.log, cloud.log),
+        entries: mergeMap(cur.entries, cloud.entries),
+        todos: mergeList(cur.todos, cloud.todos),
+        countdowns: mergeList(cur.countdowns, cloud.countdowns),
+        goals: mergeList(cur.goals, cloud.goals),
+        wishlist: mergeList(cur.wishlist, cloud.wishlist),
+        planner: mergeList(cur.planner, cloud.planner),
+      }
+      pushPayload = merged
+      return merged
+    })
+    await new Promise(r => setTimeout(r, 0))
+    if (pushPayload) await pushToCloud(userId, pushPayload)
     const nowIso = new Date().toISOString()
     setLastSync(nowIso); saveLocal({ meta: { lastSync: nowIso } })
     setSyncing(false)
-  }, [data, online]) // eslint-disable-line
+  }, [online]) // eslint-disable-line
 
   useEffect(() => { if (online && syncEnabled) doSync() }, [online]) // eslint-disable-line
 
@@ -232,6 +242,7 @@ export default function App() {
   const todayEvents = planner.filter(e => e.date === tKey).sort((a, b) => a.start.localeCompare(b.start))
   const upcomingCountdowns = [...countdowns].filter(c => daysUntil(c.date) >= 0).sort((a, b) => daysUntil(a.date) - daysUntil(b.date)).slice(0, 3)
   const activeGoals = goals.filter(g => !g.done).slice(0, 3)
+  const wishlistPreview = wishlist.filter(w => !w.purchased).slice(0, 3)
 
   const liveDetail = detailHabit ? habits.find(h => h.id === detailHabit.id) || detailHabit : null
 
@@ -263,11 +274,14 @@ export default function App() {
           user={USER} now={now}
           todayHabits={todayHabits} habitsDone={habitsDone} log={log}
           todayTodos={todayTodos} todayEvents={todayEvents}
-          countdowns={upcomingCountdowns} goals={activeGoals}
+          countdowns={upcomingCountdowns} goals={activeGoals} wishlist={wishlistPreview}
           online={online} syncing={syncing} lastSync={lastSync} onSync={doSync}
           onCompleteHabit={completeHabit} onUndoHabit={undoHabit} onIncHabit={incrementHabit}
           onOpenHabit={setDetailHabit} onLongHabit={(h) => askDelete('habit', h)}
           onToggleTodo={toggleField('todos', 'done')} onLongTodo={(t) => askDelete('todo', t)}
+          onEditTodo={(t) => { setEditing(t); setCreating('todo') }}
+          onToggleWish={toggleField('wishlist', 'purchased')} onLongWish={(w) => askDelete('wish', w)}
+          onEditWish={(w) => { setEditing(w); setCreating('wish') }}
           goTo={setTab}
         />
       )}
@@ -275,7 +289,8 @@ export default function App() {
         <CalendarPage habits={habits} log={log} planner={planner}
           plannerDate={plannerDate} setPlannerDate={setPlannerDate}
           onAddEvent={() => { setEditing(null); setCreating('event') }}
-          onEditEvent={(e) => { setEditing(e); setCreating('event') }} />
+          onEditEvent={(e) => { setEditing(e); setCreating('event') }}
+          onLongEvent={(e) => askDelete('event', e)} />
       )}
       {tab === 'insights' && <Insights habits={habits} log={log} todos={todos} />}
       {tab === 'more' && (
@@ -283,6 +298,8 @@ export default function App() {
           countdowns={countdowns} goals={goals} wishlist={wishlist}
           onAdd={pick}
           onEditGoal={(g) => { setEditing(g); setCreating('goal') }}
+          onEditCountdown={(c) => { setEditing(c); setCreating('countdown') }}
+          onEditWish={(w) => { setEditing(w); setCreating('wish') }}
           onToggleWish={toggleField('wishlist', 'purchased')}
           onLongCountdown={(c) => askDelete('countdown', c)}
           onLongGoal={(g) => askDelete('goal', g)}
@@ -308,7 +325,7 @@ export default function App() {
       {creating === 'countdown' && <CreateCountdown onClose={() => { setCreating(null); setEditing(null) }} onSave={saveInto('countdowns')} editing={editing} />}
       {creating === 'goal' && <CreateGoal onClose={() => { setCreating(null); setEditing(null) }} onSave={saveInto('goals')} editing={editing} />}
       {creating === 'wish' && <CreateWish onClose={() => { setCreating(null); setEditing(null) }} onSave={saveInto('wishlist')} editing={editing} />}
-      {creating === 'event' && <CreatePlannerEvent onClose={() => { setCreating(null); setEditing(null) }} onSave={saveInto('planner')} editing={editing} defaultDate={todayKey(plannerDate)} />}
+      {creating === 'event' && <CreatePlannerEvent onClose={() => { setCreating(null); setEditing(null) }} onSave={saveInto('planner')} editing={editing} defaultDate={todayKey(plannerDate)} onDelete={(e) => { setCreating(null); askDelete('event', e) }} />}
 
       {confirm && <ConfirmDialog
         title={`Are you sure you want to delete this ${confirm.kind === 'wish' ? 'item' : confirm.kind}?`}
@@ -329,10 +346,10 @@ function Tab({ id, label, icon: I, tab, setTab }) {
 
 /* ============================================================ HOME ============================================================ */
 function HomeDashboard({
-  user, now, todayHabits, habitsDone, log, todayTodos, todayEvents, countdowns, goals,
+  user, now, todayHabits, habitsDone, log, todayTodos, todayEvents, countdowns, goals, wishlist,
   online, syncing, lastSync, onSync,
   onCompleteHabit, onUndoHabit, onIncHabit, onOpenHabit, onLongHabit,
-  onToggleTodo, onLongTodo, goTo,
+  onToggleTodo, onLongTodo, onEditTodo, onToggleWish, onLongWish, onEditWish, goTo,
 }) {
   const hour = now.getHours()
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
@@ -409,8 +426,8 @@ function HomeDashboard({
       ))}
 
       {(pendingTodos.length > 0 || doneTodos.length > 0) && <SectionHead title="Today's To-dos" onMore={() => goTo('more')} />}
-      {pendingTodos.map(t => <TodoCard key={t.id} todo={t} onToggle={onToggleTodo} onLongPress={onLongTodo} />)}
-      {doneTodos.map(t => <TodoCard key={t.id} todo={t} onToggle={onToggleTodo} onLongPress={onLongTodo} />)}
+      {pendingTodos.map(t => <TodoCard key={t.id} todo={t} onToggle={onToggleTodo} onLongPress={onLongTodo} onEdit={onEditTodo} />)}
+      {doneTodos.map(t => <TodoCard key={t.id} todo={t} onToggle={onToggleTodo} onLongPress={onLongTodo} onEdit={onEditTodo} />)}
 
       {goals.length > 0 && (
         <>
@@ -423,6 +440,15 @@ function HomeDashboard({
               </div>
               <div className="pbar"><i style={{ width: (g.progress || 0) + '%', background: 'var(--purple)' }} /></div>
             </div>
+          ))}
+        </>
+      )}
+
+      {wishlist && wishlist.length > 0 && (
+        <>
+          <SectionHead title="Wishlist" onMore={() => goTo('more')} />
+          {wishlist.map(w => (
+            <WishRow key={w.id} item={w} onToggle={onToggleWish} onLongPress={onLongWish} onEdit={onEditWish} />
           ))}
         </>
       )}
@@ -451,7 +477,7 @@ function SyncStatus({ online, syncing, onSync }) {
 }
 
 /* ============================================================ CALENDAR ============================================================ */
-function CalendarPage({ habits, log, planner, plannerDate, setPlannerDate, onAddEvent, onEditEvent }) {
+function CalendarPage({ habits, log, planner, plannerDate, setPlannerDate, onAddEvent, onEditEvent, onLongEvent }) {
   const [view, setView] = useState('month')
   const [month, setMonth] = useState(new Date())
   const active = habits.filter(h => !h.archived)
@@ -530,14 +556,14 @@ function CalendarPage({ habits, log, planner, plannerDate, setPlannerDate, onAdd
         </>
       ) : (
         <PlannerTimeline planner={planner} date={plannerDate} setDate={setPlannerDate}
-          onAdd={onAddEvent} onEditEvent={onEditEvent} />
+          onAdd={onAddEvent} onEditEvent={onEditEvent} onLongEvent={onLongEvent} />
       )}
     </div>
   )
 }
 
 /* ============================================================ MORE ============================================================ */
-function MorePage({ countdowns, goals, wishlist, onAdd, onEditGoal, onToggleWish, onLongCountdown, onLongGoal, onLongWish, onOpenProfile }) {
+function MorePage({ countdowns, goals, wishlist, onAdd, onEditGoal, onEditCountdown, onEditWish, onToggleWish, onLongCountdown, onLongGoal, onLongWish, onOpenProfile }) {
   const [section, setSection] = useState('countdowns')
   return (
     <div className="fade-in">
@@ -550,9 +576,9 @@ function MorePage({ countdowns, goals, wishlist, onAdd, onEditGoal, onToggleWish
         <button className={section === 'goals' ? 'active' : ''} onClick={() => { setSection('goals'); haptic() }}>Goals</button>
         <button className={section === 'wishlist' ? 'active' : ''} onClick={() => { setSection('wishlist'); haptic() }}>Wishlist</button>
       </div>
-      {section === 'countdowns' && <CountdownsPage countdowns={countdowns} onAdd={() => onAdd('countdown')} onLongPress={onLongCountdown} />}
+      {section === 'countdowns' && <CountdownsPage countdowns={countdowns} onAdd={() => onAdd('countdown')} onLongPress={onLongCountdown} onEdit={onEditCountdown} />}
       {section === 'goals' && <GoalsPage goals={goals} onAdd={() => onAdd('goal')} onEdit={onEditGoal} onLongPress={onLongGoal} />}
-      {section === 'wishlist' && <WishlistPage wishlist={wishlist} onAdd={() => onAdd('wish')} onToggle={onToggleWish} onLongPress={onLongWish} />}
+      {section === 'wishlist' && <WishlistPage wishlist={wishlist} onAdd={() => onAdd('wish')} onToggle={onToggleWish} onLongPress={onLongWish} onEdit={onEditWish} />}
     </div>
   )
 }

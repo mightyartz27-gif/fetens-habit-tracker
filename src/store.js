@@ -1,7 +1,19 @@
 import { createClient } from '@supabase/supabase-js'
 
-const url = import.meta.env.VITE_SUPABASE_URL
+const rawUrl = import.meta.env.VITE_SUPABASE_URL
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+// Self-heal a mis-entered URL. The Supabase client appends "/rest/v1/" itself,
+// so if someone pasted ".../rest/v1" (or a trailing slash) into the env var we
+// strip it here — otherwise every request 404s on a doubled "/rest/v1/rest/v1/".
+function normalizeUrl(u) {
+  if (!u) return u
+  let s = u.trim().replace(/\/+$/, '')          // drop trailing slashes
+  s = s.replace(/\/rest\/v1$/i, '')             // drop a stray /rest/v1 suffix
+  s = s.replace(/\/auth\/v1$/i, '')             // and a few other common paste mistakes
+  return s
+}
+const url = normalizeUrl(rawUrl)
 
 export const supabase = (url && key) ? createClient(url, key) : null
 export const syncEnabled = !!supabase
@@ -81,27 +93,36 @@ export async function pushToCloud(userId, data) {
 
 export async function pullFromCloud(userId) {
   if (!supabase || !userId) return null
+  // Track whether ANY request errored. Supabase does NOT throw on HTTP errors
+  // (404, RLS, missing table) — it resolves with { data:null, error }. If we
+  // treated that as an empty account, a later merge would wipe local data.
+  // So on ANY error we return null → caller skips the destructive merge.
+  let failed = false
   const get = async (table) => {
-    try { const { data } = await supabase.from(table).select('*').eq('user_id', userId); return data || [] }
-    catch { return [] }
-  }
-  try {
-    const [habits, logRows, entryRows, todos, countdowns, goals, wishlist, planner] = await Promise.all([
-      get('habits'), get('habit_log'), get('habit_entries'), get('todos'),
-      get('countdowns'), get('goals'), get('wishlist'), get('planner'),
-    ])
-    const log = {}
-    logRows.forEach(r => { (log[r.habit_id] = log[r.habit_id] || {})[r.date] = isNaN(+r.value) ? r.value : +r.value })
-    const entries = {}
-    entryRows.forEach(r => { (entries[r.habit_id] = entries[r.habit_id] || {})[r.date] = { note: r.note || '', checklist: r.checklist || [] } })
-    const strip = (arr) => arr.map(({ user_id, ...rest }) => rest)
-    return {
-      habits: strip(habits), log, entries,
-      todos: strip(todos), countdowns: strip(countdowns),
-      goals: strip(goals), wishlist: strip(wishlist), planner: strip(planner),
+    try {
+      const { data, error } = await supabase.from(table).select('*').eq('user_id', userId)
+      if (error) { failed = true; return [] }
+      return data || []
+    } catch {
+      failed = true
+      return []
     }
-  } catch {
-    return null
+  }
+  const [habits, logRows, entryRows, todos, countdowns, goals, wishlist, planner] = await Promise.all([
+    get('habits'), get('habit_log'), get('habit_entries'), get('todos'),
+    get('countdowns'), get('goals'), get('wishlist'), get('planner'),
+  ])
+  if (failed) return null   // unreliable pull — do not let it overwrite local
+
+  const log = {}
+  logRows.forEach(r => { (log[r.habit_id] = log[r.habit_id] || {})[r.date] = isNaN(+r.value) ? r.value : +r.value })
+  const entries = {}
+  entryRows.forEach(r => { (entries[r.habit_id] = entries[r.habit_id] || {})[r.date] = { note: r.note || '', checklist: r.checklist || [] } })
+  const strip = (arr) => arr.map(({ user_id, ...rest }) => rest)
+  return {
+    habits: strip(habits), log, entries,
+    todos: strip(todos), countdowns: strip(countdowns),
+    goals: strip(goals), wishlist: strip(wishlist), planner: strip(planner),
   }
 }
 

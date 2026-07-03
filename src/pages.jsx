@@ -1,21 +1,18 @@
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight, Plus, Clock } from 'lucide-react'
 import { todayKey, prettyDate, daysUntil, mondayDow, WEEK_LABELS_FULL, haptic } from './helpers'
-import { CountdownRow, GoalCard, WishRow } from './features'
+import { CountdownRow, GoalCard, WishRow, useLongPress } from './features'
 
 /* ============================================================
    PLANNER — Google-Calendar-style day timeline
    ============================================================ */
-export function PlannerTimeline({ planner, date, setDate, onAdd, onEditEvent }) {
+export function PlannerTimeline({ planner, date, setDate, onAdd, onEditEvent, onLongEvent }) {
   const dayKey = todayKey(date)
   const events = (planner || []).filter(e => e.date === dayKey).sort((a, b) => a.start.localeCompare(b.start))
-  const hours = Array.from({ length: 18 }, (_, i) => i + 6) // 6:00 → 23:00
 
   const shift = (n) => { const d = new Date(date); d.setDate(d.getDate() + n); setDate(d); haptic() }
   const isToday = dayKey === todayKey()
   const label = date.toLocaleDateString('default', { weekday: 'long', month: 'long', day: 'numeric' })
-
-  const eventsAt = (h) => events.filter(e => parseInt(e.start.split(':')[0], 10) === h)
 
   return (
     <div>
@@ -28,32 +25,21 @@ export function PlannerTimeline({ planner, date, setDate, onAdd, onEditEvent }) 
         <button onClick={() => shift(1)} style={{ padding: 6 }}><ChevronRight size={20} color="var(--text-2)" /></button>
       </div>
 
-      <div className="card" style={{ padding: 16 }}>
-        {events.length === 0 && (
+      {events.length === 0 ? (
+        <div className="card" style={{ padding: 16 }}>
           <div style={{ textAlign: 'center', padding: '24px 0' }}>
             <Clock size={32} color="var(--placeholder)" style={{ marginBottom: 8 }} />
             <p className="t-help">No events scheduled. Tap + to plan your day.</p>
           </div>
-        )}
-        {events.length > 0 && hours.map(h => {
-          const hEvents = eventsAt(h)
-          return (
-            <div key={h} className="tl-row">
-              <div className="tl-time">{String(h).padStart(2, '0')}:00</div>
-              <div className="tl-track">
-                {hEvents.map(e => (
-                  <div key={e.id} className="tl-event" onClick={() => onEditEvent(e)}
-                    style={{ background: e.color + '18', borderLeft: `3px solid ${e.color}` }}>
-                    <div className="t-card" style={{ fontWeight: 600 }}>{e.title}</div>
-                    <div className="t-caption">{e.start} – {e.end}</div>
-                  </div>
-                ))}
-                <span className="tl-dot" style={{ background: hEvents.length ? hEvents[0].color : 'var(--border)' }} />
-              </div>
-            </div>
-          )
-        })}
-      </div>
+        </div>
+      ) : (
+        <div className="card" style={{ padding: '8px 4px' }}>
+          {events.map((e, i) => (
+            <PlannerEventRow key={e.id} e={e} first={i === 0} last={i === events.length - 1}
+              onEdit={() => onEditEvent(e)} onLong={() => onLongEvent(e)} />
+          ))}
+        </div>
+      )}
 
       <button className="btn-ghost" style={{ width: '100%', marginTop: 16 }} onClick={onAdd}>
         <span className="row" style={{ gap: 8, justifyContent: 'center' }}><Plus size={18} /> Add event</span>
@@ -62,10 +48,31 @@ export function PlannerTimeline({ planner, date, setDate, onAdd, onEditEvent }) 
   )
 }
 
+function PlannerEventRow({ e, first, last, onEdit, onLong }) {
+  const lp = useLongPress(onLong)
+  return (
+    <div className="pl-row" {...lp.handlers} onClick={(ev) => { if (!lp.suppressClick(ev)) onEdit() }}>
+      {/* time gutter */}
+      <div className="pl-time">{e.start}</div>
+      {/* rail with hollow circle + connecting line */}
+      <div className="pl-rail">
+        <span className="pl-line pl-line-top" style={{ opacity: first ? 0 : 1 }} />
+        <span className="pl-dot" style={{ borderColor: e.color }} />
+        <span className="pl-line pl-line-bottom" style={{ opacity: last ? 0 : 1 }} />
+      </div>
+      {/* event body */}
+      <div className="pl-body">
+        <div className="t-caption" style={{ color: e.color, fontWeight: 700, marginBottom: 3 }}>{e.start} – {e.end}</div>
+        <div className="t-habit" style={{ fontSize: 16 }}>{e.title}</div>
+      </div>
+    </div>
+  )
+}
+
 /* ============================================================
    COUNTDOWNS page
    ============================================================ */
-export function CountdownsPage({ countdowns, onAdd, onLongPress }) {
+export function CountdownsPage({ countdowns, onAdd, onLongPress, onEdit }) {
   const sorted = [...(countdowns || [])].sort((a, b) => daysUntil(a.date) - daysUntil(b.date))
   const upcoming = sorted.filter(c => daysUntil(c.date) >= 0)
   const past = sorted.filter(c => daysUntil(c.date) < 0)
@@ -78,9 +85,9 @@ export function CountdownsPage({ countdowns, onAdd, onLongPress }) {
         </button>
       </div>
       {sorted.length === 0 && <EmptyCard emoji="🎉" title="No countdowns yet" text="Count down to birthdays, trips, or paydays." />}
-      {upcoming.map(cd => <CountdownRow key={cd.id} cd={cd} onLongPress={onLongPress} />)}
+      {upcoming.map(cd => <CountdownRow key={cd.id} cd={cd} onLongPress={onLongPress} onEdit={onEdit} />)}
       {past.length > 0 && <div className="section-head"><span className="t-section" style={{ color: 'var(--text-2)' }}>Past</span></div>}
-      {past.map(cd => <CountdownRow key={cd.id} cd={cd} onLongPress={onLongPress} />)}
+      {past.map(cd => <CountdownRow key={cd.id} cd={cd} onLongPress={onLongPress} onEdit={onEdit} />)}
     </div>
   )
 }
@@ -110,7 +117,7 @@ export function GoalsPage({ goals, onAdd, onEdit, onLongPress }) {
 /* ============================================================
    WISHLIST page
    ============================================================ */
-export function WishlistPage({ wishlist, onAdd, onToggle, onLongPress }) {
+export function WishlistPage({ wishlist, onAdd, onToggle, onLongPress, onEdit }) {
   const want = (wishlist || []).filter(w => !w.purchased)
   const got = (wishlist || []).filter(w => w.purchased)
   return (
@@ -122,9 +129,9 @@ export function WishlistPage({ wishlist, onAdd, onToggle, onLongPress }) {
         </button>
       </div>
       {(wishlist || []).length === 0 && <EmptyCard emoji="🛍️" title="Wishlist is empty" text="Add things you're saving up for." />}
-      {want.map(w => <WishRow key={w.id} item={w} onToggle={onToggle} onLongPress={onLongPress} />)}
+      {want.map(w => <WishRow key={w.id} item={w} onToggle={onToggle} onLongPress={onLongPress} onEdit={onEdit} />)}
       {got.length > 0 && <div className="section-head"><span className="t-section" style={{ color: 'var(--text-2)' }}>Purchased</span></div>}
-      {got.map(w => <WishRow key={w.id} item={w} onToggle={onToggle} onLongPress={onLongPress} />)}
+      {got.map(w => <WishRow key={w.id} item={w} onToggle={onToggle} onLongPress={onLongPress} onEdit={onEdit} />)}
     </div>
   )
 }

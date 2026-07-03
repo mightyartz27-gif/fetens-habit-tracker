@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import {
   X, Plus, Check, Trash2, Calendar as CalIcon, Clock, Flag, Target,
   Gift, ShoppingCart, ChevronRight, TrendingUp,
@@ -11,29 +11,45 @@ import {
 /* ============================================================
    Shared: long-press to delete (with confirm dialog in App)
    ============================================================ */
-export function useLongPress(onLong) {
-  let timer = null
-  const start = () => { timer = setTimeout(() => { haptic(); onLong() }, 550) }
-  const clear = () => clearTimeout(timer)
+export function useLongPress(onLong, ms = 500) {
+  const timer = useRef(null)
+  const fired = useRef(false)
+
+  const start = () => {
+    fired.current = false
+    timer.current = setTimeout(() => { fired.current = true; haptic(); onLong() }, ms)
+  }
+  const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null } }
+
+  // Called by the element's onClick — returns true if the click should be
+  // ignored because a long-press already fired.
+  const suppressClick = (e) => {
+    if (fired.current) { e.preventDefault(); e.stopPropagation(); fired.current = false; return true }
+    return false
+  }
+
   return {
-    onTouchStart: start, onTouchEnd: clear, onTouchMove: clear,
-    onMouseDown: start, onMouseUp: clear, onMouseLeave: clear,
+    handlers: {
+      onTouchStart: start, onTouchEnd: clear, onTouchMove: clear,
+      onMouseDown: start, onMouseUp: clear, onMouseLeave: clear,
+    },
+    suppressClick,
   }
 }
 
 /* ============================================================
    TO-DO
    ============================================================ */
-export function TodoCard({ todo, onToggle, onLongPress }) {
+export function TodoCard({ todo, onToggle, onLongPress, onEdit }) {
   const lp = useLongPress(() => onLongPress(todo))
   const overdue = todo.due && daysUntil(todo.due) < 0 && !todo.done
   return (
-    <div className="habit-card" {...lp} style={{ opacity: todo.done ? 0.6 : 1 }}>
-      <button className={`check-btn ${todo.done ? 'done' : ''}`} onClick={() => onToggle(todo)}
+    <div className="habit-card" {...lp.handlers} style={{ opacity: todo.done ? 0.6 : 1 }}>
+      <button className={`check-btn ${todo.done ? 'done' : ''}`} onClick={(e) => { e.stopPropagation(); onToggle(todo) }}
         style={todo.done ? { background: 'var(--purple)', borderColor: 'var(--purple)' } : {}}>
         {todo.done ? <Check size={18} color="#fff" strokeWidth={3} /> : null}
       </button>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 0 }} onClick={(e) => { if (onEdit && !lp.suppressClick(e)) onEdit(todo) }}>
         <div className="t-habit" style={{ marginBottom: 2, textDecoration: todo.done ? 'line-through' : 'none' }}>
           {todo.title}
         </div>
@@ -114,12 +130,12 @@ export function CreateTodo({ onClose, onSave, editing }) {
 /* ============================================================
    COUNTDOWN
    ============================================================ */
-export function CountdownRow({ cd, onLongPress }) {
+export function CountdownRow({ cd, onLongPress, onEdit }) {
   const lp = useLongPress(() => onLongPress(cd))
   const d = daysUntil(cd.date)
   const future = d >= 0
   return (
-    <div className="habit-card" {...lp}>
+    <div className="habit-card" {...lp.handlers} onClick={(e) => { if (onEdit && !lp.suppressClick(e)) onEdit(cd) }}>
       <div className="habit-icon" style={{ background: 'var(--lavender)', fontSize: 24 }}>{cd.icon}</div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="t-habit">{cd.title}</div>
@@ -175,7 +191,7 @@ export function GoalCard({ goal, onEdit, onLongPress }) {
   const lp = useLongPress(() => onLongPress(goal))
   const pct = Math.max(0, Math.min(100, goal.progress || 0))
   return (
-    <div className="card" {...lp} onClick={() => onEdit(goal)} style={{ padding: 16, marginBottom: 12 }}>
+    <div className="card" {...lp.handlers} onClick={(e) => { if (!lp.suppressClick(e)) onEdit(goal) }} style={{ padding: 16, marginBottom: 12 }}>
       <div className="row between" style={{ marginBottom: 8 }}>
         <div className="row" style={{ gap: 10 }}>
           <span className="chip" style={{ padding: '3px 10px', fontSize: 11, background: 'var(--lavender)', color: 'var(--purple)', border: 'none' }}>{goal.category}</span>
@@ -256,15 +272,15 @@ export function CreateGoal({ onClose, onSave, editing }) {
 /* ============================================================
    WISHLIST
    ============================================================ */
-export function WishRow({ item, onToggle, onLongPress }) {
+export function WishRow({ item, onToggle, onLongPress, onEdit }) {
   const lp = useLongPress(() => onLongPress(item))
   return (
-    <div className="habit-card" {...lp} style={{ opacity: item.purchased ? 0.6 : 1 }}>
-      <button className={`check-btn ${item.purchased ? 'done' : ''}`} onClick={() => onToggle(item)}
+    <div className="habit-card" {...lp.handlers} style={{ opacity: item.purchased ? 0.6 : 1 }}>
+      <button className={`check-btn ${item.purchased ? 'done' : ''}`} onClick={(e) => { e.stopPropagation(); onToggle(item) }}
         style={item.purchased ? { background: 'var(--success)', borderColor: 'var(--success)' } : {}}>
         {item.purchased ? <Check size={18} color="#fff" strokeWidth={3} /> : null}
       </button>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 0 }} onClick={(e) => { if (onEdit && !lp.suppressClick(e)) onEdit(item) }}>
         <div className="t-habit" style={{ textDecoration: item.purchased ? 'line-through' : 'none' }}>{item.title}</div>
         {item.note ? <div className="t-caption">{item.note}</div> : null}
       </div>
@@ -305,7 +321,7 @@ export function CreateWish({ onClose, onSave, editing }) {
 /* ============================================================
    PLANNER — timeline event
    ============================================================ */
-export function CreatePlannerEvent({ onClose, onSave, editing, defaultDate }) {
+export function CreatePlannerEvent({ onClose, onSave, editing, defaultDate, onDelete }) {
   const [title, setTitle] = useState(editing?.title || '')
   const [date, setDate] = useState(editing?.date || defaultDate || todayKey())
   const [start, setStart] = useState(editing?.start || '09:00')
@@ -345,6 +361,10 @@ export function CreatePlannerEvent({ onClose, onSave, editing, defaultDate }) {
       <button className="btn-primary" disabled={!title.trim()} onClick={save} style={{ marginTop: 8 }}>
         {editing ? 'Save changes' : 'Add event'}
       </button>
+      {editing && onDelete && (
+        <button className="btn-ghost" style={{ width: '100%', marginTop: 12, color: 'var(--error)' }}
+          onClick={() => onDelete(editing)}>Delete event</button>
+      )}
     </Sheet>
   )
 }
