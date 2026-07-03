@@ -66,29 +66,33 @@ function HabitCard({ habit, log, onComplete, onUndo, onIncrement, onOpen, onLong
 
   return (
     <div className={`habit-card ${glow ? 'glow' : ''}`} {...lp.handlers} onClick={(e) => { if (!lp.suppressClick(e)) onOpen(habit) }} role="button"
-      style={{ opacity: done ? 0.72 : 1 }}>
+      style={{ opacity: habit.paused ? 0.55 : done ? 0.72 : 1 }}>
       <div className="habit-icon" style={{ background: habit.color + '20' }}>
         <Icon size={24} color={habit.color} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="t-habit" style={{ marginBottom: 2, textDecoration: done && !isCounter ? 'line-through' : 'none' }}>{habit.name}</div>
         <div className="t-caption">
-          {habit.reminderOn ? habit.time + ' · ' : ''}{habit.repeat}
+          {habit.paused ? '⏸ Paused · ' : ''}{habit.reminderOn && habit.time ? habit.time + ' · ' : ''}{habit.repeat}
           {isCounter ? ` · ${val}/${habit.goalTarget} ${habit.goalUnit}` : ''}
         </div>
-        {isCounter && (
+        {isCounter && !habit.paused && (
           <div style={{ height: 6, borderRadius: 999, background: 'var(--purple-light)', marginTop: 8, overflow: 'hidden' }}>
             <div style={{ height: '100%', width: `${Math.min(100, (val / habit.goalTarget) * 100)}%`,
               background: habit.color, transition: 'width 300ms cubic-bezier(0.16,1,0.3,1)' }} />
           </div>
         )}
       </div>
-      <button className={`check-btn ${done ? 'done' : ''}`} onClick={complete} aria-label={done ? 'Undo' : 'Complete'}
-        style={done ? { background: habit.color, borderColor: habit.color } : {}}>
-        {done ? <Check size={18} color="#fff" strokeWidth={3} />
-          : isCounter ? <Plus size={16} color="var(--placeholder)" />
-          : <Check size={16} color="var(--placeholder)" />}
-      </button>
+      {habit.paused ? (
+        <span className="pri-pill" style={{ background: 'var(--lavender)', color: 'var(--text-2)' }}>Paused</span>
+      ) : (
+        <button className={`check-btn ${done ? 'done' : ''}`} onClick={complete} aria-label={done ? 'Undo' : 'Complete'}
+          style={done ? { background: habit.color, borderColor: habit.color } : {}}>
+          {done ? <Check size={18} color="#fff" strokeWidth={3} />
+            : isCounter ? <Plus size={16} color="var(--placeholder)" />
+            : <Check size={16} color="var(--placeholder)" />}
+        </button>
+      )}
     </div>
   )
 }
@@ -96,6 +100,7 @@ function HabitCard({ habit, log, onComplete, onUndo, onIncrement, onOpen, onLong
 export default function App() {
   const [locked, setLocked] = useState(() => sessionStorage.getItem('feten_unlocked') !== '1')
   const [tab, setTab] = useState('home')
+  const [moreSection, setMoreSection] = useState('countdowns')
   const [data, setData] = useState({
     habits: [], log: {}, entries: {}, todos: [], countdowns: [], goals: [], wishlist: [], planner: [],
   })
@@ -236,8 +241,9 @@ export default function App() {
   /* ---------- derived: today ---------- */
   const now = new Date()
   const tKey = todayKey()
-  const todayHabits = habits.filter(h => !h.archived && !h.paused && scheduledOn(h, now))
-  const habitsDone = todayHabits.filter(h => isDone(h, log)).length
+  const todayHabits = habits.filter(h => !h.archived && scheduledOn(h, now))
+  const habitsDone = todayHabits.filter(h => !h.paused && isDone(h, log)).length
+  const todayHabitsCount = todayHabits.filter(h => !h.paused).length
   const todayTodos = todos.filter(t => !t.due || todoOnDate(t, now) || (!t.done && daysUntil(t.due) < 0))
   const todayEvents = planner.filter(e => e.date === tKey).sort((a, b) => a.start.localeCompare(b.start))
   const upcomingCountdowns = [...countdowns].filter(c => daysUntil(c.date) >= 0).sort((a, b) => daysUntil(a.date) - daysUntil(b.date)).slice(0, 3)
@@ -247,6 +253,7 @@ export default function App() {
   const liveDetail = detailHabit ? habits.find(h => h.id === detailHabit.id) || detailHabit : null
 
   const pick = (id) => { setChooser(false); setEditing(null); setCreating(id) }
+  const goToMore = (section) => { setMoreSection(section); setTab('more') }
 
   if (locked) return <Lockscreen onUnlock={() => setLocked(false)} />
 
@@ -272,7 +279,7 @@ export default function App() {
       {tab === 'home' && (
         <HomeDashboard
           user={USER} now={now}
-          todayHabits={todayHabits} habitsDone={habitsDone} log={log}
+          todayHabits={todayHabits} habitsDone={habitsDone} todayHabitsCount={todayHabitsCount} log={log}
           todayTodos={todayTodos} todayEvents={todayEvents}
           countdowns={upcomingCountdowns} goals={activeGoals} wishlist={wishlistPreview}
           online={online} syncing={syncing} lastSync={lastSync} onSync={doSync}
@@ -282,7 +289,7 @@ export default function App() {
           onEditTodo={(t) => { setEditing(t); setCreating('todo') }}
           onToggleWish={toggleField('wishlist', 'purchased')} onLongWish={(w) => askDelete('wish', w)}
           onEditWish={(w) => { setEditing(w); setCreating('wish') }}
-          goTo={setTab}
+          goTo={setTab} goToMore={goToMore}
         />
       )}
       {tab === 'calendar' && (
@@ -296,6 +303,7 @@ export default function App() {
       {tab === 'more' && (
         <MorePage
           countdowns={countdowns} goals={goals} wishlist={wishlist}
+          section={moreSection} setSection={setMoreSection}
           onAdd={pick}
           onEditGoal={(g) => { setEditing(g); setCreating('goal') }}
           onEditCountdown={(c) => { setEditing(c); setCreating('countdown') }}
@@ -346,15 +354,15 @@ function Tab({ id, label, icon: I, tab, setTab }) {
 
 /* ============================================================ HOME ============================================================ */
 function HomeDashboard({
-  user, now, todayHabits, habitsDone, log, todayTodos, todayEvents, countdowns, goals, wishlist,
+  user, now, todayHabits, habitsDone, todayHabitsCount, log, todayTodos, todayEvents, countdowns, goals, wishlist,
   online, syncing, lastSync, onSync,
   onCompleteHabit, onUndoHabit, onIncHabit, onOpenHabit, onLongHabit,
-  onToggleTodo, onLongTodo, onEditTodo, onToggleWish, onLongWish, onEditWish, goTo,
+  onToggleTodo, onLongTodo, onEditTodo, onToggleWish, onLongWish, onEditWish, goTo, goToMore,
 }) {
   const hour = now.getHours()
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
   const todayStr = now.toLocaleDateString('default', { weekday: 'long', month: 'long', day: 'numeric' })
-  const totalToday = todayHabits.length + todayTodos.length
+  const totalToday = todayHabitsCount + todayTodos.length
   const doneToday = habitsDone + todayTodos.filter(t => t.done).length
   const pct = totalToday ? Math.round((doneToday / totalToday) * 100) : 0
   const pendingTodos = todayTodos.filter(t => !t.done)
@@ -385,7 +393,7 @@ function HomeDashboard({
 
       {countdowns.length > 0 && (
         <>
-          <SectionHead title="Countdowns" onMore={() => goTo('more')} />
+          <SectionHead title="Countdowns" onMore={() => goToMore('countdowns')} />
           <div className="row" style={{ gap: 12, overflowX: 'auto', paddingBottom: 4, marginBottom: 8 }}>
             {countdowns.map(cd => {
               const d = daysUntil(cd.date)
@@ -425,13 +433,13 @@ function HomeDashboard({
           onOpen={onOpenHabit} onLongPress={onLongHabit} />
       ))}
 
-      {(pendingTodos.length > 0 || doneTodos.length > 0) && <SectionHead title="Today's To-dos" onMore={() => goTo('more')} />}
+      {(pendingTodos.length > 0 || doneTodos.length > 0) && <SectionHead title="Today's To-dos" />}
       {pendingTodos.map(t => <TodoCard key={t.id} todo={t} onToggle={onToggleTodo} onLongPress={onLongTodo} onEdit={onEditTodo} />)}
       {doneTodos.map(t => <TodoCard key={t.id} todo={t} onToggle={onToggleTodo} onLongPress={onLongTodo} onEdit={onEditTodo} />)}
 
       {goals.length > 0 && (
         <>
-          <SectionHead title="Goals" onMore={() => goTo('more')} />
+          <SectionHead title="Goals" onMore={() => goToMore('goals')} />
           {goals.map(g => (
             <div key={g.id} className="card" style={{ padding: 14, marginBottom: 10 }}>
               <div className="row between" style={{ marginBottom: 8 }}>
@@ -446,7 +454,7 @@ function HomeDashboard({
 
       {wishlist && wishlist.length > 0 && (
         <>
-          <SectionHead title="Wishlist" onMore={() => goTo('more')} />
+          <SectionHead title="Wishlist" onMore={() => goToMore('wishlist')} />
           {wishlist.map(w => (
             <WishRow key={w.id} item={w} onToggle={onToggleWish} onLongPress={onLongWish} onEdit={onEditWish} />
           ))}
@@ -544,8 +552,9 @@ function CalendarPage({ habits, log, planner, plannerDate, setPlannerDate, onAdd
                 const colors = { done: 'var(--success)', partial: 'var(--warning)', missed: 'var(--border)', empty: 'transparent', future: 'transparent' }
                 const isToday = todayKey(new Date(year, m, day)) === todayKey()
                 return (
-                  <div key={day} className="cal-day"
-                    style={{ background: isToday ? 'var(--purple-light)' : 'transparent', color: st === 'future' ? 'var(--placeholder)' : 'var(--text)' }}>
+                  <div key={day} className="cal-day" role="button"
+                    onClick={() => { setPlannerDate(new Date(year, m, day)); setView('day'); haptic() }}
+                    style={{ background: isToday ? 'var(--purple-light)' : 'transparent', color: st === 'future' ? 'var(--placeholder)' : 'var(--text)', cursor: 'pointer' }}>
                     {day}
                     {st !== 'empty' && st !== 'future' && <span className="cal-dot" style={{ background: colors[st] }} />}
                   </div>
@@ -563,8 +572,7 @@ function CalendarPage({ habits, log, planner, plannerDate, setPlannerDate, onAdd
 }
 
 /* ============================================================ MORE ============================================================ */
-function MorePage({ countdowns, goals, wishlist, onAdd, onEditGoal, onEditCountdown, onEditWish, onToggleWish, onLongCountdown, onLongGoal, onLongWish, onOpenProfile }) {
-  const [section, setSection] = useState('countdowns')
+function MorePage({ countdowns, goals, wishlist, section, setSection, onAdd, onEditGoal, onEditCountdown, onEditWish, onToggleWish, onLongCountdown, onLongGoal, onLongWish, onOpenProfile }) {
   return (
     <div className="fade-in">
       <div className="row between" style={{ marginBottom: 16 }}>

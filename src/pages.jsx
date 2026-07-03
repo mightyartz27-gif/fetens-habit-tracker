@@ -33,7 +33,7 @@ export function PlannerTimeline({ planner, date, setDate, onAdd, onEditEvent, on
           </div>
         </div>
       ) : (
-        <div className="card" style={{ padding: '8px 4px' }}>
+        <div className="card" style={{ padding: '12px 8px' }}>
           {events.map((e, i) => (
             <PlannerEventRow key={e.id} e={e} first={i === 0} last={i === events.length - 1}
               onEdit={() => onEditEvent(e)} onLong={() => onLongEvent(e)} />
@@ -60,10 +60,10 @@ function PlannerEventRow({ e, first, last, onEdit, onLong }) {
         <span className="pl-dot" style={{ borderColor: e.color }} />
         <span className="pl-line pl-line-bottom" style={{ opacity: last ? 0 : 1 }} />
       </div>
-      {/* event body */}
+      {/* event body — full width, never cropped */}
       <div className="pl-body">
         <div className="t-caption" style={{ color: e.color, fontWeight: 700, marginBottom: 3 }}>{e.start} – {e.end}</div>
-        <div className="t-habit" style={{ fontSize: 16 }}>{e.title}</div>
+        <div className="pl-title">{e.title}</div>
       </div>
     </div>
   )

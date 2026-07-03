@@ -358,8 +358,8 @@ textarea.input { resize: none; }
 /* ---------- Planner event rows (reference-style timeline with rail) ---------- */
 .pl-row {
   display: grid; grid-template-columns: 46px 20px 1fr; gap: 10px; align-items: stretch;
-  min-height: 68px; cursor: pointer; transition: background var(--dur) var(--ease);
-  border-radius: 12px;
+  min-height: 72px; cursor: pointer; transition: background var(--dur) var(--ease);
+  border-radius: 12px; width: 100%;
 }
 .pl-row:active { background: var(--lavender); }
 .pl-time { font-size: 13px; font-weight: 600; color: var(--text-2); padding-top: 14px; text-align: right; }
@@ -370,5 +370,9 @@ textarea.input { resize: none; }
   width: 14px; height: 14px; border-radius: 999px; background: var(--card);
   border: 3px solid var(--purple); flex-shrink: 0; margin: 2px 0;
 }
-.pl-body { padding: 12px 4px 12px 0; min-width: 0; }
+.pl-body { padding: 12px 8px 12px 0; min-width: 0; flex: 1; }
+.pl-title {
+  font-size: 16px; font-weight: 600; color: var(--text); line-height: 1.35;
+  word-break: break-word; overflow-wrap: anywhere; white-space: normal;
+}
 
