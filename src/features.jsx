@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
   X, Plus, Check, Trash2, Calendar as CalIcon, Clock, Flag, Target,
   Gift, ShoppingCart, ChevronRight, TrendingUp,
@@ -373,10 +373,36 @@ export function CreatePlannerEvent({ onClose, onSave, editing, defaultDate, onDe
    Shared Sheet + Field primitives (keyboard-friendly)
    ============================================================ */
 export function Sheet({ onClose, title, children }) {
+  const sheetRef = useRef(null)
+
+  // iOS keyboard fix: a position:fixed;bottom:0 sheet stays pinned to the
+  // layout viewport, so the on-screen keyboard covers it. We watch the
+  // visualViewport and lift the sheet by the keyboard's height so inputs
+  // stay visible. Tapping outside / closing the keyboard resets it.
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const onResize = () => {
+      const el = sheetRef.current
+      if (!el) return
+      // keyboard height = layout height - visual viewport height - offsetTop
+      const keyboard = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+      el.style.transform = `translateX(-50%) translateY(-${keyboard}px)`
+      // if a focused input would still be hidden, nudge it into view
+      const active = document.activeElement
+      if (keyboard > 0 && active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+        active.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      }
+    }
+    vv.addEventListener('resize', onResize)
+    vv.addEventListener('scroll', onResize)
+    return () => { vv.removeEventListener('resize', onResize); vv.removeEventListener('scroll', onResize) }
+  }, [])
+
   return (
     <>
       <div className="sheet-backdrop" onClick={onClose} />
-      <div className="sheet">
+      <div className="sheet" ref={sheetRef}>
         <div className="sheet-grab" />
         <div className="row between" style={{ marginBottom: 20 }}>
           <span className="t-section">{title}</span>

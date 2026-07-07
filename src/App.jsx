@@ -18,7 +18,7 @@ import {
   CreateWish, CreatePlannerEvent, CreateChooser, ConfirmDialog, useLongPress, WishRow,
 } from './features'
 import {
-  PlannerTimeline, CountdownsPage, GoalsPage, WishlistPage, EmptyCard,
+  PlannerTimeline, CountdownsPage, GoalsPage, WishlistPage, EmptyCard, HabitsPage, TodosPage,
 } from './pages'
 
 const USER = 'Feten'
@@ -246,9 +246,15 @@ export default function App() {
   const todayHabitsCount = todayHabits.filter(h => !h.paused).length
   const todayTodos = todos.filter(t => !t.due || todoOnDate(t, now) || (!t.done && daysUntil(t.due) < 0))
   const todayEvents = planner.filter(e => e.date === tKey).sort((a, b) => a.start.localeCompare(b.start))
-  const upcomingCountdowns = [...countdowns].filter(c => daysUntil(c.date) >= 0).sort((a, b) => daysUntil(a.date) - daysUntil(b.date)).slice(0, 3)
-  const activeGoals = goals.filter(g => !g.done).slice(0, 3)
-  const wishlistPreview = wishlist.filter(w => !w.purchased).slice(0, 3)
+  const upcomingCountdowns = [...countdowns].sort((a, b) => {
+    const da = daysUntil(a.date), db = daysUntil(b.date)
+    // upcoming (>=0) first by soonest, then past events after
+    if (da >= 0 && db < 0) return -1
+    if (da < 0 && db >= 0) return 1
+    return da - db
+  }).slice(0, 4)
+  const activeGoals = [...goals].sort((a, b) => (a.done === b.done ? 0 : a.done ? 1 : -1)).slice(0, 3)
+  const wishlistPreview = [...wishlist].sort((a, b) => (a.purchased === b.purchased ? 0 : a.purchased ? 1 : -1)).slice(0, 3)
 
   const liveDetail = detailHabit ? habits.find(h => h.id === detailHabit.id) || detailHabit : null
 
@@ -293,25 +299,35 @@ export default function App() {
         />
       )}
       {tab === 'calendar' && (
-        <CalendarPage habits={habits} log={log} planner={planner}
+        <CalendarPage habits={habits} log={log} planner={planner} todos={todos} goals={goals}
           plannerDate={plannerDate} setPlannerDate={setPlannerDate}
           onAddEvent={() => { setEditing(null); setCreating('event') }}
           onEditEvent={(e) => { setEditing(e); setCreating('event') }}
-          onLongEvent={(e) => askDelete('event', e)} />
+          onLongEvent={(e) => askDelete('event', e)}
+          onToggleHabitOn={toggleDoneOn}
+          onToggleTodo={toggleField('todos', 'done')}
+          onOpenHabit={setDetailHabit} />
       )}
       {tab === 'insights' && <Insights habits={habits} log={log} todos={todos} />}
       {tab === 'more' && (
         <MorePage
+          habits={habits} log={log} todos={todos}
           countdowns={countdowns} goals={goals} wishlist={wishlist}
           section={moreSection} setSection={setMoreSection}
           onAdd={pick}
           onEditGoal={(g) => { setEditing(g); setCreating('goal') }}
           onEditCountdown={(c) => { setEditing(c); setCreating('countdown') }}
           onEditWish={(w) => { setEditing(w); setCreating('wish') }}
+          onEditTodo={(t) => { setEditing(t); setCreating('todo') }}
           onToggleWish={toggleField('wishlist', 'purchased')}
+          onToggleTodo={toggleField('todos', 'done')}
+          onToggleHabit={(h) => toggleDoneOn(h, todayKey())}
+          onOpenHabit={setDetailHabit}
           onLongCountdown={(c) => askDelete('countdown', c)}
           onLongGoal={(g) => askDelete('goal', g)}
           onLongWish={(w) => askDelete('wish', w)}
+          onLongHabit={(h) => askDelete('habit', h)}
+          onLongTodo={(t) => askDelete('todo', t)}
           onOpenProfile={() => setTab('profile')}
         />
       )}
@@ -441,12 +457,14 @@ function HomeDashboard({
         <>
           <SectionHead title="Goals" onMore={() => goToMore('goals')} />
           {goals.map(g => (
-            <div key={g.id} className="card" style={{ padding: 14, marginBottom: 10 }}>
+            <div key={g.id} className="card" style={{ padding: 14, marginBottom: 10, opacity: g.done ? 0.65 : 1 }}>
               <div className="row between" style={{ marginBottom: 8 }}>
-                <span className="t-card" style={{ fontWeight: 600 }}>{g.title}</span>
-                <span className="t-label">{g.progress || 0}%</span>
+                <span className="t-card" style={{ fontWeight: 600 }}>
+                  {g.done ? '✓ ' : ''}{g.title}
+                </span>
+                <span className="t-label">{g.done ? 'Done' : (g.progress || 0) + '%'}</span>
               </div>
-              <div className="pbar"><i style={{ width: (g.progress || 0) + '%', background: 'var(--purple)' }} /></div>
+              <div className="pbar"><i style={{ width: (g.done ? 100 : g.progress || 0) + '%', background: g.done ? 'var(--success)' : 'var(--purple)' }} /></div>
             </div>
           ))}
         </>
@@ -485,9 +503,10 @@ function SyncStatus({ online, syncing, onSync }) {
 }
 
 /* ============================================================ CALENDAR ============================================================ */
-function CalendarPage({ habits, log, planner, plannerDate, setPlannerDate, onAddEvent, onEditEvent, onLongEvent }) {
+function CalendarPage({ habits, log, planner, todos, goals, plannerDate, setPlannerDate, onAddEvent, onEditEvent, onLongEvent, onToggleHabitOn, onToggleTodo, onOpenHabit }) {
   const [view, setView] = useState('month')
   const [month, setMonth] = useState(new Date())
+  const [selected, setSelected] = useState(new Date()) // selected day for the daily view
   const active = habits.filter(h => !h.archived)
 
   const year = month.getFullYear(), m = month.getMonth()
@@ -498,7 +517,7 @@ function CalendarPage({ habits, log, planner, plannerDate, setPlannerDate, onAdd
   const dayStatus = (day) => {
     const d = new Date(year, m, day)
     if (d > new Date()) return 'future'
-    const sched = active.filter(h => scheduledOn(h, d))
+    const sched = active.filter(h => !h.paused && scheduledOn(h, d))
     if (!sched.length) return 'empty'
     const done = sched.filter(h => isDone(h, log, todayKey(d))).length
     if (done === sched.length) return 'done'
@@ -510,7 +529,7 @@ function CalendarPage({ habits, log, planner, plannerDate, setPlannerDate, onAdd
   for (let day = 1; day <= daysInMonth; day++) {
     const d = new Date(year, m, day)
     if (d > new Date()) continue
-    active.forEach(h => { if (scheduledOn(h, d)) { sched++; if (isDone(h, log, todayKey(d))) done++ } })
+    active.forEach(h => { if (!h.paused && scheduledOn(h, d)) { sched++; if (isDone(h, log, todayKey(d))) done++ } })
   }
   const pct = sched ? Math.round((done / sched) * 100) : 0
 
@@ -550,18 +569,29 @@ function CalendarPage({ habits, log, planner, plannerDate, setPlannerDate, onAdd
                 const day = i + 1
                 const st = dayStatus(day)
                 const colors = { done: 'var(--success)', partial: 'var(--warning)', missed: 'var(--border)', empty: 'transparent', future: 'transparent' }
-                const isToday = todayKey(new Date(year, m, day)) === todayKey()
+                const cellDate = new Date(year, m, day)
+                const isToday = todayKey(cellDate) === todayKey()
+                const isSelected = todayKey(cellDate) === todayKey(selected)
                 return (
                   <div key={day} className="cal-day" role="button"
-                    onClick={() => { setPlannerDate(new Date(year, m, day)); setView('day'); haptic() }}
-                    style={{ background: isToday ? 'var(--purple-light)' : 'transparent', color: st === 'future' ? 'var(--placeholder)' : 'var(--text)', cursor: 'pointer' }}>
+                    onClick={() => { setSelected(cellDate); haptic() }}
+                    style={{
+                      background: isSelected ? 'var(--purple)' : isToday ? 'var(--purple-light)' : 'transparent',
+                      color: isSelected ? '#fff' : st === 'future' ? 'var(--placeholder)' : 'var(--text)',
+                      cursor: 'pointer',
+                    }}>
                     {day}
-                    {st !== 'empty' && st !== 'future' && <span className="cal-dot" style={{ background: colors[st] }} />}
+                    {st !== 'empty' && st !== 'future' && <span className="cal-dot" style={{ background: isSelected ? '#fff' : colors[st] }} />}
                   </div>
                 )
               })}
             </div>
           </div>
+
+          {/* Daily activities for the selected day — stays on Calendar */}
+          <DailyView date={selected} habits={active} log={log} todos={todos} goals={goals} planner={planner}
+            onToggleHabitOn={onToggleHabitOn} onToggleTodo={onToggleTodo} onOpenHabit={onOpenHabit}
+            onEditEvent={onEditEvent} onOpenPlanner={() => { setPlannerDate(selected); setView('day') }} />
         </>
       ) : (
         <PlannerTimeline planner={planner} date={plannerDate} setDate={setPlannerDate}
@@ -571,19 +601,125 @@ function CalendarPage({ habits, log, planner, plannerDate, setPlannerDate, onAdd
   )
 }
 
+function DailyView({ date, habits, log, todos, goals, planner, onToggleHabitOn, onToggleTodo, onOpenHabit, onEditEvent, onOpenPlanner }) {
+  const dKey = todayKey(date)
+  const label = date.toLocaleDateString('default', { weekday: 'long', month: 'long', day: 'numeric' })
+  const dayHabits = habits.filter(h => !h.paused && scheduledOn(h, date))
+  const dayTodos = (todos || []).filter(t => t.due === dKey)
+  const dayGoals = (goals || []).filter(g => g.target === dKey)
+  const dayEvents = (planner || []).filter(e => e.date === dKey).sort((a, b) => a.start.localeCompare(b.start))
+  const nothing = !dayHabits.length && !dayTodos.length && !dayGoals.length && !dayEvents.length
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div className="section-head">
+        <span className="t-section">{label}</span>
+        <button onClick={onOpenPlanner} className="t-label" style={{ color: 'var(--purple)' }}>Plan day</button>
+      </div>
+
+      {nothing && (
+        <div className="card" style={{ padding: 28, textAlign: 'center' }}>
+          <p className="t-help">Nothing tracked for this day.</p>
+        </div>
+      )}
+
+      {dayEvents.length > 0 && (
+        <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+          <div className="t-label" style={{ marginBottom: 8 }}>Schedule</div>
+          {dayEvents.map(e => (
+            <div key={e.id} className="row" style={{ gap: 12, padding: '8px 4px' }} onClick={() => onEditEvent(e)} role="button">
+              <span className="t-label" style={{ color: 'var(--text-2)', minWidth: 44 }}>{e.start}</span>
+              <span style={{ width: 10, height: 10, borderRadius: 999, background: e.color }} />
+              <span className="t-card" style={{ flex: 1 }}>{e.title}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {dayHabits.length > 0 && (
+        <>
+          <div className="t-label" style={{ margin: '8px 4px' }}>Habits</div>
+          {dayHabits.map(h => {
+            const dn = isDone(h, log, dKey)
+            const Icon = ICONS[h.icon] || ICONS.Droplets
+            return (
+              <div key={h.id} className="habit-card" style={{ opacity: dn ? 0.72 : 1 }} onClick={() => onOpenHabit(h)} role="button">
+                <div className="habit-icon" style={{ background: h.color + '20' }}><Icon size={22} color={h.color} /></div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="t-habit" style={{ textDecoration: dn ? 'line-through' : 'none' }}>{h.name}</div>
+                  <div className="t-caption">{h.repeat}</div>
+                </div>
+                <button className={`check-btn ${dn ? 'done' : ''}`} onClick={(e) => { e.stopPropagation(); haptic(); onToggleHabitOn(h, dKey) }}
+                  style={dn ? { background: h.color, borderColor: h.color } : {}}>
+                  {dn ? <Check size={18} color="#fff" strokeWidth={3} /> : <Check size={16} color="var(--placeholder)" />}
+                </button>
+              </div>
+            )
+          })}
+        </>
+      )}
+
+      {dayTodos.length > 0 && (
+        <>
+          <div className="t-label" style={{ margin: '12px 4px 8px' }}>To-dos</div>
+          {dayTodos.map(t => (
+            <div key={t.id} className="habit-card" style={{ opacity: t.done ? 0.6 : 1 }}>
+              <button className={`check-btn ${t.done ? 'done' : ''}`} onClick={() => { haptic(); onToggleTodo(t) }}
+                style={t.done ? { background: 'var(--purple)', borderColor: 'var(--purple)' } : {}}>
+                {t.done ? <Check size={18} color="#fff" strokeWidth={3} /> : null}
+              </button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="t-habit" style={{ textDecoration: t.done ? 'line-through' : 'none' }}>{t.title}</div>
+                {t.time ? <div className="t-caption">{t.time}</div> : null}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+
+      {dayGoals.length > 0 && (
+        <>
+          <div className="t-label" style={{ margin: '12px 4px 8px' }}>Goals due</div>
+          {dayGoals.map(g => (
+            <div key={g.id} className="card" style={{ padding: 14, marginBottom: 10, opacity: g.done ? 0.65 : 1 }}>
+              <div className="row between" style={{ marginBottom: 8 }}>
+                <span className="t-card" style={{ fontWeight: 600 }}>{g.done ? '✓ ' : ''}{g.title}</span>
+                <span className="t-label">{g.done ? 'Done' : (g.progress || 0) + '%'}</span>
+              </div>
+              <div className="pbar"><i style={{ width: (g.done ? 100 : g.progress || 0) + '%', background: g.done ? 'var(--success)' : 'var(--purple)' }} /></div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  )
+}
+
 /* ============================================================ MORE ============================================================ */
-function MorePage({ countdowns, goals, wishlist, section, setSection, onAdd, onEditGoal, onEditCountdown, onEditWish, onToggleWish, onLongCountdown, onLongGoal, onLongWish, onOpenProfile }) {
+function MorePage({ habits, log, todos, countdowns, goals, wishlist, section, setSection, onAdd,
+  onEditGoal, onEditCountdown, onEditWish, onEditTodo, onToggleWish, onToggleTodo, onToggleHabit,
+  onOpenHabit, onLongCountdown, onLongGoal, onLongWish, onLongHabit, onLongTodo, onOpenProfile }) {
+  const tabs = [
+    { id: 'habits', label: 'Habits' },
+    { id: 'todos', label: 'To-do List' },
+    { id: 'countdowns', label: 'Countdowns' },
+    { id: 'goals', label: 'Goals' },
+    { id: 'wishlist', label: 'Wishlist' },
+  ]
   return (
     <div className="fade-in">
       <div className="row between" style={{ marginBottom: 16 }}>
         <h1 className="t-screen">More</h1>
         <button className="sync-pill" style={{ background: 'var(--lavender)', color: 'var(--purple)' }} onClick={onOpenProfile}>👑 Profile</button>
       </div>
-      <div className="seg" style={{ marginBottom: 20 }}>
-        <button className={section === 'countdowns' ? 'active' : ''} onClick={() => { setSection('countdowns'); haptic() }}>Countdowns</button>
-        <button className={section === 'goals' ? 'active' : ''} onClick={() => { setSection('goals'); haptic() }}>Goals</button>
-        <button className={section === 'wishlist' ? 'active' : ''} onClick={() => { setSection('wishlist'); haptic() }}>Wishlist</button>
+      <div className="row" style={{ gap: 8, overflowX: 'auto', paddingBottom: 6, marginBottom: 20 }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => { setSection(t.id); haptic() }}
+            className={`chip ${section === t.id ? 'active' : ''}`} style={{ flexShrink: 0 }}>{t.label}</button>
+        ))}
       </div>
+      {section === 'habits' && <HabitsPage habits={habits} log={log} onAdd={() => onAdd('habit')} onOpen={onOpenHabit} onToggle={onToggleHabit} onLongPress={onLongHabit} />}
+      {section === 'todos' && <TodosPage todos={todos} onAdd={() => onAdd('todo')} onToggle={onToggleTodo} onLongPress={onLongTodo} onEdit={onEditTodo} />}
       {section === 'countdowns' && <CountdownsPage countdowns={countdowns} onAdd={() => onAdd('countdown')} onLongPress={onLongCountdown} onEdit={onEditCountdown} />}
       {section === 'goals' && <GoalsPage goals={goals} onAdd={() => onAdd('goal')} onEdit={onEditGoal} onLongPress={onLongGoal} />}
       {section === 'wishlist' && <WishlistPage wishlist={wishlist} onAdd={() => onAdd('wish')} onToggle={onToggleWish} onLongPress={onLongWish} onEdit={onEditWish} />}

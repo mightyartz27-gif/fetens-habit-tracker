@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { ChevronLeft, ChevronRight, Plus, Clock } from 'lucide-react'
-import { todayKey, prettyDate, daysUntil, mondayDow, WEEK_LABELS_FULL, haptic } from './helpers'
-import { CountdownRow, GoalCard, WishRow, useLongPress } from './features'
+import { ChevronLeft, ChevronRight, Plus, Clock, Check } from 'lucide-react'
+import { todayKey, prettyDate, daysUntil, mondayDow, WEEK_LABELS_FULL, haptic, ICONS, isDone, currentStreak, scheduledOn } from './helpers'
+import { CountdownRow, GoalCard, WishRow, TodoCard, useLongPress } from './features'
 
 /* ============================================================
    PLANNER — Google-Calendar-style day timeline
@@ -142,6 +142,70 @@ export function EmptyCard({ emoji, title, text }) {
       <div style={{ fontSize: 44, marginBottom: 10 }}>{emoji}</div>
       <div className="t-section" style={{ marginBottom: 6 }}>{title}</div>
       <p className="t-help">{text}</p>
+    </div>
+  )
+}
+
+/* ============================================================
+   HABITS page (all habits, completed stay visible)
+   ============================================================ */
+export function HabitsPage({ habits, log, onAdd, onOpen, onToggle, onLongPress }) {
+  const active = (habits || []).filter(h => !h.archived)
+  return (
+    <div className="fade-in">
+      <div className="row between" style={{ marginBottom: 20 }}>
+        <h1 className="t-screen">Habits</h1>
+        <button className="btn-ghost" onClick={onAdd} style={{ padding: '8px 14px' }}>
+          <span className="row" style={{ gap: 6 }}><Plus size={16} /> New</span>
+        </button>
+      </div>
+      {active.length === 0 && <EmptyCard emoji="🌸" title="No habits yet" text="Create your first habit to start building a routine." />}
+      {active.map(h => {
+        const dn = isDone(h, log)
+        const Icon = ICONS[h.icon] || ICONS.Droplets
+        const lp = useLongPress(() => onLongPress(h))
+        return (
+          <div key={h.id} className="habit-card" {...lp.handlers}
+            onClick={(e) => { if (!lp.suppressClick(e)) onOpen(h) }} role="button"
+            style={{ opacity: h.paused ? 0.55 : dn ? 0.72 : 1 }}>
+            <div className="habit-icon" style={{ background: h.color + '20' }}><Icon size={22} color={h.color} /></div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="t-habit" style={{ textDecoration: dn ? 'line-through' : 'none' }}>{h.name}</div>
+              <div className="t-caption">{h.paused ? '⏸ Paused · ' : ''}{h.repeat} · 🔥 {currentStreak(h, log)}</div>
+            </div>
+            {h.paused ? (
+              <span className="pri-pill" style={{ background: 'var(--lavender)', color: 'var(--text-2)' }}>Paused</span>
+            ) : (
+              <button className={`check-btn ${dn ? 'done' : ''}`} onClick={(e) => { e.stopPropagation(); haptic(); onToggle(h) }}
+                style={dn ? { background: h.color, borderColor: h.color } : {}}>
+                {dn ? <Check size={18} color="#fff" strokeWidth={3} /> : <Check size={16} color="var(--placeholder)" />}
+              </button>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/* ============================================================
+   TODO LIST page (all todos, completed stay visible)
+   ============================================================ */
+export function TodosPage({ todos, onAdd, onToggle, onLongPress, onEdit }) {
+  const pending = (todos || []).filter(t => !t.done)
+  const done = (todos || []).filter(t => t.done)
+  return (
+    <div className="fade-in">
+      <div className="row between" style={{ marginBottom: 20 }}>
+        <h1 className="t-screen">To-do List</h1>
+        <button className="btn-ghost" onClick={onAdd} style={{ padding: '8px 14px' }}>
+          <span className="row" style={{ gap: 6 }}><Plus size={16} /> New</span>
+        </button>
+      </div>
+      {(todos || []).length === 0 && <EmptyCard emoji="✅" title="No to-dos yet" text="Add a task to get started." />}
+      {pending.map(t => <TodoCard key={t.id} todo={t} onToggle={onToggle} onLongPress={onLongPress} onEdit={onEdit} />)}
+      {done.length > 0 && <div className="section-head"><span className="t-section" style={{ color: 'var(--text-2)' }}>Completed</span></div>}
+      {done.map(t => <TodoCard key={t.id} todo={t} onToggle={onToggle} onLongPress={onLongPress} onEdit={onEdit} />)}
     </div>
   )
 }
