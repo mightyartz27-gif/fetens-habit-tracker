@@ -155,12 +155,29 @@ Logic tested OK in isolation (Daily / Weekdays / Weekends / Specific Days) and t
 - **Tap-to-edit added for To-do, Countdown, Wishlist** (they were create+delete only). ✅
 - Full internal test suite passed (see below).
 
-## 📌 STILL TODO (next session)
-- Verify all of the above LIVE on device after user fixes Netlify URL + redeploys.
-- Confirm cloud sync returns 200s once URL fixed + migration run.
-- Optional: "now" indicator line on today's planner timeline.
-- Clarify "weekly" wording with user (no Weekly option exists; it's Daily/Weekdays/
-  Weekends/Specific Days/Every X Days/Custom).
+## 📌 SESSION 3 FIXES (from user's live bug report)
+1. Wishlist created shows on Home now (was More-only). ✅ verified
+2. "See all" on Home routes to the correct More section (Goals→Goals, not Countdowns).
+   Added moreSection state + goToMore(section). ✅ verified
+3. Day-planner redesigned: full-width rows, wrapping titles (`.pl-title` word-break),
+   rail + hollow circles. Long titles no longer cropped. ✅ verified with screenshot
+4. Paused habits stay VISIBLE on Home with a "Paused" badge (were disappearing);
+   excluded from progress ring count. ✅ verified
+5. Calendar month days are now tappable → opens that day in Day Planner (were dead dots). ✅
+6. Weekends / Specific-Days(<5) scheduling confirmed correct on their actual days
+   (was the old DOW/index storage bug; fixed in current CreateHabit). ✅ logic-verified
+   - Reminder: a Weekends habit correctly does NOT show on a weekday — that's expected.
+
+## 📌 STILL TODO / WATCH
+- Planner events: edit (tap) + delete (long-press or Delete button in form) — implemented,
+  needs live re-verify on device.
+- "Every X Days" / "Custom" repeat: NOT in REPEATS array (only Daily/Weekdays/Weekends/
+  Specific Days). scheduledOn falls to default(true) for unknown repeats. If user wants
+  those, must add both the option AND scheduledOn handling.
+- Date/time on cards: countdowns(date)✅ todos(due+time)✅ events(time)✅ goals(target if set)
+  wishlist(price, no date — could add createdAt). Habit shows time only if reminderOn.
+- #1 CRITICAL still: user must fix Netlify VITE_SUPABASE_URL (drop /rest/v1) + redeploy,
+  else live data loss persists regardless of code.
 
 ## 🧪 INTERNAL TEST RESULTS (fixed build, Playwright, all PASS, 0 errors)
 - CREATE: all 6 types (habit, todo, countdown, goal, wishlist, event) → persist ✅
@@ -171,3 +188,31 @@ Logic tested OK in isolation (Daily / Weekdays / Weekends / Specific Days) and t
 - DELETE: long-press → "Are you sure…" confirm dialog → item removed (count→0) ✅
 - HABIT REPEATS on Friday: Daily=show, Weekdays=show, Weekends=hide, Specific(Fri)=show,
   Specific(Mon)=hide — all correct ✅
+
+## 📌 SESSION 4 (permanent life-tracker refactor) — all verified internally
+- iOS keyboard fix: Sheet uses visualViewport API to lift above keyboard + transition. ✅
+- Completed items NEVER disappear (habits/todos/wishlist/goals stay visible with done style). ✅
+- Long-press → confirm delete everywhere. ✅
+- Calendar: tapping a day stays on Calendar and shows a DailyView (schedule/habits/todos/goals). ✅
+- More: 5 sections via scrollable chips — Habits, To-do List, Countdowns, Goals, Wishlist. ✅
+- New HabitsPage + TodosPage in pages.jsx (completed stay visible). ✅
+- Persistence: localStorage every change; pullFromCloud returns null on error (no wipe). ✅ code
+
+STILL TODO: live re-verify after Netlify VITE_SUPABASE_URL fix + redeploy (#1 blocker);
+"Every X Days"/"Custom" repeat not implemented; iOS keyboard verified structurally not on device.
+
+## 📌 SESSION 4 CHANGES
+- Removed passcode/lock screen entirely — app opens straight to Home. (Lockscreen.jsx
+  left in project but no longer imported/rendered.)
+- REPORTS page fully rebuilt (was gamified Insights). Now minimal, matching reference:
+  - Week/Month/Year tabs.
+  - Vertical list of habits, each card = icon + name + frequency label.
+  - Week: 7 fixed cells Mon..Sun (circles), check + habit color when done.
+  - Month: every day of current month as small squares.
+  - Year: GitHub-style contribution grid (one square/day, Monday-first columns).
+  - Reads real log history; updates live on completion (verified before/after = +1).
+  - Removed: stat cards, bar chart, streak highlight, achievements, StatCard component.
+  - New CSS: .rep-week/.rep-month/.rep-year/.rep-cell(-lg/-sm/-xs) in styles.css.
+- Unused imports cleaned (Award, Sparkles, Trophy, Flame, TrendingUp).
+- Image rendering in the test harness was flaky this session; verified Reports via DOM
+  assertions instead (cell counts, day labels, filled-state, live update). All passed.

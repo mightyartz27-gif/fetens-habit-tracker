@@ -1,18 +1,17 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Home as House, CalendarDays, BarChart3 as ChartColumn, Plus, Check,
-  Flame, Cloud, CloudOff, RefreshCw, ChevronLeft, ChevronRight,
-  Award, Sparkles, TrendingUp, Trophy, LayoutGrid,
+  Cloud, CloudOff, RefreshCw, ChevronLeft, ChevronRight,
+  LayoutGrid,
 } from 'lucide-react'
 import {
   ICONS, todayKey, scheduledOn, currentStreak, longestStreak, isDone,
-  progressValue, haptic, fireConfetti, mondayDow, WEEK_LABELS, daysUntil,
+  progressValue, haptic, fireConfetti, mondayDow, WEEK_LABELS, WEEK_LABELS_FULL, daysUntil,
   todoOnDate,
 } from './helpers'
 import { loadLocal, saveLocal, syncEnabled, pushToCloud, pullFromCloud, deleteFromCloud } from './store'
 import CreateHabit from './CreateHabit'
 import HabitDetail from './HabitDetail'
-import Lockscreen from './Lockscreen'
 import {
   TodoCard, CreateTodo, CreateCountdown, CreateGoal,
   CreateWish, CreatePlannerEvent, CreateChooser, ConfirmDialog, useLongPress, WishRow,
@@ -98,7 +97,6 @@ function HabitCard({ habit, log, onComplete, onUndo, onIncrement, onOpen, onLong
 }
 
 export default function App() {
-  const [locked, setLocked] = useState(() => sessionStorage.getItem('feten_unlocked') !== '1')
   const [tab, setTab] = useState('home')
   const [moreSection, setMoreSection] = useState('countdowns')
   const [data, setData] = useState({
@@ -261,8 +259,6 @@ export default function App() {
   const pick = (id) => { setChooser(false); setEditing(null); setCreating(id) }
   const goToMore = (section) => { setMoreSection(section); setTab('more') }
 
-  if (locked) return <Lockscreen onUnlock={() => setLocked(false)} />
-
   if (liveDetail) {
     return (
       <div className="app">
@@ -308,7 +304,7 @@ export default function App() {
           onToggleTodo={toggleField('todos', 'done')}
           onOpenHabit={setDetailHabit} />
       )}
-      {tab === 'insights' && <Insights habits={habits} log={log} todos={todos} />}
+      {tab === 'insights' && <Insights habits={habits} log={log} />}
       {tab === 'more' && (
         <MorePage
           habits={habits} log={log} todos={todos}
@@ -728,103 +724,149 @@ function MorePage({ habits, log, todos, countdowns, goals, wishlist, section, se
 }
 
 /* ============================================================ REPORTS ============================================================ */
-function Insights({ habits, log, todos }) {
+function Insights({ habits, log }) {
   const [range, setRange] = useState('Week')
   const active = habits.filter(h => !h.archived)
 
-  const doneOn = (d) => {
-    const sched = active.filter(h => scheduledOn(h, d))
-    return { done: sched.filter(h => isDone(h, log, todayKey(d))).length, total: sched.length }
-  }
-
-  let bars = [], rangeDone = 0, rangeSched = 0
-  const today = new Date()
-  if (range === 'Week') {
-    for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); const r = doneOn(d); rangeDone += r.done; rangeSched += r.total; bars.push({ label: WEEK_LABELS[mondayDow(d)], done: r.done, total: r.total || 1 }) }
-  } else if (range === 'Month') {
-    for (let w = 4; w >= 0; w--) { let dn = 0, tt = 0; for (let day = 0; day < 7; day++) { const d = new Date(); d.setDate(d.getDate() - (w * 7 + day)); const r = doneOn(d); dn += r.done; tt += r.total } rangeDone += dn; rangeSched += tt; bars.push({ label: w === 0 ? 'Now' : `${w}w`, done: dn, total: tt || 1 }) }
-  } else {
-    for (let mo = 11; mo >= 0; mo--) { const ref = new Date(today.getFullYear(), today.getMonth() - mo, 1); const di = new Date(ref.getFullYear(), ref.getMonth() + 1, 0).getDate(); let dn = 0, tt = 0; for (let day = 1; day <= di; day++) { const d = new Date(ref.getFullYear(), ref.getMonth(), day); if (d > today) break; const r = doneOn(d); dn += r.done; tt += r.total } rangeDone += dn; rangeSched += tt; bars.push({ label: ref.toLocaleDateString('default', { month: 'narrow' }), done: dn, total: tt || 1 }) }
-  }
-  const maxDone = Math.max(1, ...bars.map(b => b.done))
-  const successRate = rangeSched ? Math.round((rangeDone / rangeSched) * 100) : 0
-
-  const best = active.map(h => ({ h, s: currentStreak(h, log) })).sort((a, b) => b.s - a.s)[0]
-  const longestEver = active.reduce((mx, h) => Math.max(mx, longestStreak(h, log)), 0)
-  const totalDone = active.reduce((sum, h) => sum + Object.values(log[h.id] || {}).filter(v => v === 'done' || (typeof v === 'number' && v > 0)).length, 0)
-  const todosDone = (todos || []).filter(t => t.done).length
-
-  const last7 = []
-  for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); last7.push(doneOn(d)) }
-  const ACH = [
-    { id: 'first', label: 'First Habit', icon: Sparkles, unlocked: active.length >= 1 },
-    { id: '7', label: '7 Day Streak', icon: Flame, unlocked: longestEver >= 7 },
-    { id: '30', label: '30 Day Streak', icon: Trophy, unlocked: longestEver >= 30 },
-    { id: '100', label: '100 Done', icon: Award, unlocked: totalDone >= 100 },
-    { id: 'pw', label: 'Perfect Week', icon: TrendingUp, unlocked: last7.every(w => w.total > 0 && w.done >= w.total) },
-  ]
-
-  const chartTitle = range === 'Week' ? 'This Week' : range === 'Month' ? 'Last 4 Weeks' : 'Last 12 Months'
-
   return (
     <div className="fade-in">
-      <h1 className="t-screen" style={{ marginBottom: 6 }}>Reports</h1>
-      <p className="t-help" style={{ marginBottom: 16 }}>A gentle look at your progress.</p>
+      <h1 className="t-screen" style={{ marginBottom: 16, textAlign: 'center' }}>Statistics</h1>
 
-      <div className="seg" style={{ marginBottom: 20 }}>
+      <div className="seg" style={{ marginBottom: 24 }}>
         {['Week', 'Month', 'Year'].map(r => (
           <button key={r} className={range === r ? 'active' : ''} onClick={() => { setRange(r); haptic() }}>{r}</button>
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
-        <StatCard value={successRate + '%'} label="Success rate" />
-        <StatCard value={rangeDone} label="Completed" />
-        <StatCard value={best ? best.s : 0} label="Current streak" />
-        <StatCard value={longestEver} label="Longest streak" />
-        <StatCard value={totalDone} label="Total habits done" />
-        <StatCard value={todosDone} label="To-dos done" />
-      </div>
-
-      <div className="card" style={{ padding: 20, marginBottom: 20 }}>
-        <div className="t-section" style={{ marginBottom: 16 }}>{chartTitle}</div>
-        <div className="row" style={{ alignItems: 'flex-end', gap: range === 'Year' ? 5 : 10, height: 120 }}>
-          {bars.map((b, i) => (
-            <div key={i} style={{ flex: 1, textAlign: 'center' }}>
-              <div style={{ height: 92, display: 'flex', alignItems: 'flex-end' }}>
-                <div style={{ width: '100%', borderRadius: 6, height: `${(b.done / maxDone) * 100}%`, minHeight: b.done ? 6 : 2, background: b.done ? 'var(--purple)' : 'var(--purple-light)', transition: 'height 500ms cubic-bezier(0.16,1,0.3,1)' }} />
-              </div>
-              <div className="t-caption" style={{ marginTop: 6, fontSize: 11 }}>{b.label}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {best && best.s > 0 && (
-        <div className="card row" style={{ padding: 16, gap: 12, marginBottom: 20, background: 'var(--lavender)' }}>
-          <Flame size={28} color="var(--pink)" />
-          <div><div className="t-habit">{best.h.name}</div><div className="t-help">Strongest streak — {best.s} days. Keep the crown.</div></div>
+      {active.length === 0 && (
+        <div className="card" style={{ padding: 36, textAlign: 'center' }}>
+          <div style={{ fontSize: 40, marginBottom: 10 }}>🌸</div>
+          <div className="t-section" style={{ marginBottom: 6 }}>No habits yet</div>
+          <p className="t-help">Create a habit and your history will show up here.</p>
         </div>
       )}
 
-      <div className="section-head"><span className="t-section">Achievements</span></div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-        {ACH.map(a => { const I = a.icon; return (
-          <div key={a.id} className={`card ach ${a.unlocked ? '' : 'locked'}`}>
-            <I size={28} color={a.unlocked ? 'var(--pink)' : 'var(--placeholder)'} style={{ marginBottom: 8 }} />
-            <div className="t-caption" style={{ fontWeight: 600, color: a.unlocked ? 'var(--text)' : 'var(--text-2)' }}>{a.label}</div>
-          </div>
-        )})}
-      </div>
+      {active.map(h => (
+        <HabitReportCard key={h.id} habit={h} log={log} range={range} />
+      ))}
     </div>
   )
 }
 
-function StatCard({ value, label }) {
+function habitDoneOn(habit, log, d) {
+  return isDone(habit, log, todayKey(d))
+}
+
+function HabitReportCard({ habit, log, range }) {
+  const Icon = ICONS[habit.icon] || ICONS.Droplets
+  const freqLabel = habit.repeat === 'Daily' ? 'Everyday'
+    : habit.repeat === 'Weekdays' ? 'Weekdays'
+    : habit.repeat === 'Weekends' ? 'Weekends'
+    : habit.repeat === 'Specific Days' ? `${(habit.days || []).length} days per week`
+    : habit.repeat
+
   return (
-    <div className="card" style={{ padding: 16, textAlign: 'center' }}>
-      <div className="stat-num">{value}</div>
-      <div className="t-caption">{label}</div>
+    <div className="card" style={{ padding: 16, marginBottom: 14 }}>
+      <div className="row between" style={{ marginBottom: 14 }}>
+        <div className="row" style={{ gap: 10, minWidth: 0 }}>
+          <div className="habit-icon" style={{ background: habit.color + '20', width: 32, height: 32, borderRadius: 10 }}>
+            <Icon size={18} color={habit.color} />
+          </div>
+          <span className="t-habit" style={{ fontSize: 15 }}>{habit.name}</span>
+        </div>
+        <span className="t-caption" style={{ flexShrink: 0 }}>{freqLabel}</span>
+      </div>
+
+      {range === 'Week' && <WeekCells habit={habit} log={log} />}
+      {range === 'Month' && <MonthCells habit={habit} log={log} />}
+      {range === 'Year' && <YearCells habit={habit} log={log} />}
+    </div>
+  )
+}
+
+/* Week: always show all 7 days Mon..Sun */
+function WeekCells({ habit, log }) {
+  const today = new Date()
+  const monIdx = mondayDow(today) // 0=Mon
+  const monday = new Date(today); monday.setDate(today.getDate() - monIdx)
+  const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(monday); d.setDate(monday.getDate() + i); return d })
+
+  return (
+    <div className="rep-week">
+      {days.map((d, i) => {
+        const done = habitDoneOn(habit, log, d)
+        const future = d > today
+        return (
+          <div key={i} style={{ textAlign: 'center' }}>
+            <div className="t-caption" style={{ fontSize: 11, marginBottom: 6 }}>{WEEK_LABELS_FULL[i]}</div>
+            <div className="rep-cell rep-cell-lg" style={{
+              background: done ? habit.color : 'transparent',
+              borderColor: done ? habit.color : 'var(--border)',
+              opacity: future ? 0.4 : 1,
+            }}>
+              {done && <Check size={15} color="#fff" strokeWidth={3} />}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/* Month: every day of the current month as small squares */
+function MonthCells({ habit, log }) {
+  const today = new Date()
+  const year = today.getFullYear(), m = today.getMonth()
+  const daysInMonth = new Date(year, m + 1, 0).getDate()
+  const cells = Array.from({ length: daysInMonth }, (_, i) => new Date(year, m, i + 1))
+
+  return (
+    <div className="rep-month">
+      {cells.map((d, i) => {
+        const done = habitDoneOn(habit, log, d)
+        const future = d > today
+        return (
+          <div key={i} className="rep-cell rep-cell-sm" title={`${i + 1}`} style={{
+            background: done ? habit.color : 'transparent',
+            borderColor: done ? habit.color : 'var(--border)',
+            opacity: future ? 0.35 : 1,
+          }} />
+        )
+      })}
+    </div>
+  )
+}
+
+/* Year: GitHub-style contribution grid, one square per day */
+function YearCells({ habit, log }) {
+  const today = new Date()
+  const year = today.getFullYear()
+  const start = new Date(year, 0, 1)
+  const end = new Date(year, 11, 31)
+  const totalDays = Math.round((end - start) / 86400000) + 1
+
+  // Build columns of 7 (weeks), Monday-first
+  const firstOffset = mondayDow(start) // leading blanks
+  const cells = []
+  for (let i = 0; i < firstOffset; i++) cells.push(null)
+  for (let i = 0; i < totalDays; i++) { const d = new Date(year, 0, 1 + i); cells.push(d) }
+
+  return (
+    <div className="rep-year-scroll">
+      <div className="rep-year">
+        {cells.map((d, i) => {
+          if (!d) return <div key={i} className="rep-cell rep-cell-xs" style={{ borderColor: 'transparent' }} />
+          const done = habitDoneOn(habit, log, d)
+          const future = d > today
+          return (
+            <div key={i} className="rep-cell rep-cell-xs" style={{
+              background: done ? habit.color : 'transparent',
+              borderColor: done ? habit.color : 'var(--border)',
+              opacity: future ? 0.3 : 1,
+            }} />
+          )
+        })}
+      </div>
     </div>
   )
 }
